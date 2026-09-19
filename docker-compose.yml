@@ -1,0 +1,50 @@
+version: "3.8"
+
+# BKEMS Command Center — self-hosted on a Mac mini (or any always-on machine).
+#   docker compose up -d
+#   open http://<mac-mini-ip>:3000
+# Default login: admin / admin123 (you will be forced to change it).
+
+services:
+  db:
+    image: mysql:8.4
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: ${DB_ROOT_PASSWORD:-change-me-root}
+      MYSQL_DATABASE: bkems
+      MYSQL_USER: bkems
+      MYSQL_PASSWORD: ${DB_PASSWORD:-change-me-bkems}
+    volumes:
+      - dbdata:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+
+  app:
+    build: .
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: mysql://bkems:${DB_PASSWORD:-change-me-bkems}@db:3306/bkems
+      PORT: "3000"
+      # --- MQTT (optional): point at your central broker when hardware goes live.
+      # --- Leave unset to run the built-in demo simulator.
+      # MQTT_URL: mqtt://192.168.1.50:1883
+      # MQTT_USERNAME: bkems
+      # MQTT_PASSWORD: secret
+      # --- Web Push (optional; keys are auto-generated and persisted otherwise)
+      # VAPID_PUBLIC_KEY: ...
+      # VAPID_PRIVATE_KEY: ...
+      # VAPID_SUBJECT: mailto:you@example.com
+    volumes:
+      - appdata:/app/data   # VAPID keys persist here
+    ports:
+      - "3000:3000"
+
+volumes:
+  dbdata:
+  appdata:
