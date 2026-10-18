@@ -3,19 +3,25 @@
 **Burger King Energy Management System (BKEMS)**  
 **Prototype store:** BK 791  
 **Owner:** Andy McMillin  
-**Snapshot date:** Monday Oct 5, 2026 (America/Detroit, ET)  
+**Snapshot date:** Saturday Oct 17, 2026 (America/Detroit, ET) -- supersedes the Oct 5 snapshot  
 **Purpose:** If the conversation or the agent box is lost, start from this file alone.
 
-**Related printable files (same snapshot):**
+**Related printable files (rev 3, Oct 5 -- NOT yet redrawn for the Oct 17 thermostat replacement; see section 3A):**
 
 - `wiring/BKEMS-Wiring-Diagram.png` / `.pdf` -- rev 3 bench diagram
 - `wiring/BKEMS-Pin-Table.md` / `.pdf` -- pin-by-pin tables
 - `wiring/BKEMS-Wiring-Directions.md` / `.pdf` -- step-by-step with checkboxes
 - `wiring/gen_dot.py` -- regenerates the diagram
 
-**Canonical software repo:** `andymcmillinam-cloud/bkems-system-` (commit `286ff61` at time of this snapshot). Ignore other repos (`bkems-system-main`, the Rails/Fly.io project, `bkems-website-upload`, `bkems-mobile`, `bkems-cloud`).
+**Canonical software repo:** `andymcmillinam-cloud/bkems-system-` (app commit `286ff61` at the Oct 5 snapshot; master + wiring rev 3 docs pushed Oct 13 in commit `c2167f07` under `docs/` and `docs/wiring/`). Ignore other repos (`bkems-system-main`, the Rails/Fly.io project, `bkems-website-upload`, `bkems-mobile`, `bkems-cloud`).
 
 **Secrets:** This file never stores passwords, tokens, MQTT credentials, or admin passwords. Andy set the admin password privately.
+
+### What changed in this revision (Oct 17, 2026)
+
+1. **NEW LOCKED DECISION:** the old wall thermostats are **removed** and replaced by BKEMS **room plates** (ESP32-C3 + DS18B20 + small OLED + 3 LEDs, no buttons). The plate is powered with **5VDC + GND** over 2 repurposed thermostat-cable conductors. Full detail: **section 3A**.
+2. The **per-RTU ESP32 now makes the W / Y1 / Y2 / G calls itself** through output relays at the RTU terminal bar. This **supersedes** "original thermostat stays primary" and the NC-shed-relay-in-series-with-thermostat concept. The old text is kept below, marked **SUPERSEDED (Oct 17)**, so the history isn't lost.
+3. New safeguards (local schedules, stale-data fallback, safe default, interlocks), an **Oct 6-16 updates** section (section 1A), and new open decisions (section 8, items 11-15).
 
 ---
 
@@ -34,24 +40,46 @@ The **Command Center** website (React/Vite/Tailwind + Hono/tRPC + MySQL/Drizzle)
 
 ### Golden rules (never break these)
 
-- Original thermostats stay **primary**.
-- Store stays safe if the server, Pi, or an ESP32 dies (NC relays, local autonomy).
+- ~~Original thermostats stay **primary**.~~ **SUPERSEDED (Oct 17):** the wall thermostats are removed. Each RTU ESP32 is now the controller for its unit and makes the W/Y1/Y2/G calls itself (section 3A).
+- Store stays safe if the server, Pi, or Mac dies: each RTU ESP32 keeps its schedule/setpoints locally and keeps running (local autonomy). Lighting channels stay on NC relays.
+- Heat and cool are **interlocked** -- never both at once. **300 s** anti-short-cycle per stage.
 - **Never** put 24VAC on an ESP32 pin.
 - **No fridge compressor control** in early phases (out of scope / deferred forever until an explicit later phase).
 - MQTT Interface Contract **v1.0 is frozen** (additive-only).
 - Bench only right now -- no live compressor control, no field actuation until gates pass.
 
-### Status as of Oct 5, 2026
+### Status as of Oct 17, 2026
 
 | Area | Status |
 |---|---|
-| Command Center code | In GitHub `bkems-system-`; BK 791 four-box dashboard (cooler/freezer, lights, HVACx5, back door) |
-| Mac mini home server | Running production on LAN port 3000 with user-space MySQL; **does not auto-start after reboot** |
-| Domain `bkems.info` | Registered at IONOS; DNS still IONOS defaults; Cloudflare tunnel **not** set up yet |
+| Command Center code | In GitHub `bkems-system-`; BK 791 four-box dashboard (cooler/freezer, lights, HVACx5, back door). Docs (master + wiring rev 3) pushed Oct 13, commit `c2167f07` |
+| Mac mini home server | Running production on LAN port 3000 with user-space MySQL; back up since Oct 13 after being offline Oct 6-13; **does not auto-start after reboot** |
+| Domain `bkems.info` | Live through Cloudflare Tunnel `bkems` since Oct 5 afternoon. Tunnel process stopped Oct 16 and was restarted by hand; **no auto-restart yet** (see 1A) |
+| HVAC control design | **Changed Oct 17:** thermostats removed; room plates + RTU ESP32 make the calls (section 3A). Wiring diagram / pin table **need redraw** |
 | Raspberry Pi | On LAN (`raspberrypi.local` / `10.0.0.165`); only SSH open; username still needed; no SSH key yet |
 | ESP32 hardware | Parts on hand; Arduino ESP32 tools + CP210x on Mac; **no ESP32 plugged in yet**; wiring rev 3 drafted |
-| Firmware | Not started |
+| Firmware | Not started (RTU node firmware must now include the control logic in section 3A) |
 | Field install | Not started |
+
+---
+
+## 1A. Oct 6-16 updates
+
+| Date | What happened |
+|---|---|
+| Oct 6-13 | **Site down** (`bkems.info`) because the **Mac mini was offline**. |
+| Oct 13 | Mac mini back up; site back up. |
+| Oct 13 | Master restart file + wiring rev 3 docs pushed to GitHub `andymcmillinam-cloud/bkems-system-` in commit **`c2167f07`** (`docs/` and `docs/wiring/`). |
+| Oct 16 | The Cloudflare **tunnel process stopped without a reboot** (Mac uptime was 12 days). Restarted by hand (command below). |
+| Oct 16 | Auto-restart for the tunnel (launchd **KeepAlive** LaunchAgent) was **offered, not yet done**. |
+
+**Tunnel restart command (Mac mini, run as Andy's user):**
+
+```bash
+nohup ~/local/bin/cloudflared tunnel --config ~/.cloudflared/config.yml run bkems > ~/cf-tunnel.log 2>&1 &
+```
+
+Check afterwards: `pgrep -fl cloudflared` and `tail ~/cf-tunnel.log`, then load `https://bkems.info`.
 
 ---
 
@@ -63,22 +91,28 @@ These are settled. Do not re-litigate unless Andy explicitly changes them.
 |---|---|
 | Prototype store | **BK 791** |
 | Source of truth (software) | MQTT contract v1.0 + Command Center in `andymcmillinam-cloud/bkems-system-` |
-| Retired stacks | Home Assistant / ESPHome production path; Feb "thermostat replacement" design; Supabase cloud path |
+| Retired stacks | Home Assistant / ESPHome production path; Feb "thermostat replacement" design (the HA-era version); Supabase cloud path. **Note (Oct 17):** thermostat replacement is back, but as the BKEMS room-plate + RTU-ESP32 design in section 3A, not the Feb design |
 | Contract topics | `bkems/{deviceKey}/telemetry` (~30 s) and `bkems/{deviceKey}/cmd` |
 | Store gateway deviceKey | `store-{id}-gw` (e.g. `store-791-gw`) |
-| Relay keys (4-ch) | `relay_parking_lot`, `relay_exterior_signs`, `relay_hvac_shed_stage1`, `relay_spare_ch4` |
+| Relay keys (4-ch) | `relay_parking_lot`, `relay_exterior_signs`, `relay_hvac_shed_stage1`, `relay_spare_ch4` (`relay_hvac_shed_stage1` on the store node may become reserve now that each RTU node controls its own unit) |
 | Store-node relay GPIOs + colors | IN1 GPIO25 purple, IN2 GPIO26 orange, IN3 GPIO27 blue, IN4 GPIO33 white |
-| Relay fail-safe | Loads on **NC**; board is **active-LOW** |
-| HVAC anti-short-cycle | **300 s** (server + firmware) |
+| Relay fail-safe | Lighting loads on **NC**; board is **active-LOW**. (RTU call relays are a different job -- see section 3A) |
+| HVAC anti-short-cycle | **300 s** per stage (server + firmware) |
 | Override TTL (contract default) | **120 min** (product may still choose 3 h -- see open decisions) |
 | Offline alert | ~**10 min** with no telemetry |
 | Override watchdog | **120 s** without server contact -> cancel overrides |
-| Architecture (Oct 5) | **One store-node ESP32 in the building** + **one ESP32 at each RTU** (up to 5). No long CAT5 thermostat runs back to the store node. |
+| Architecture (Oct 5, still valid) | **One store-node ESP32 in the building** + **one ESP32 at each RTU** (up to 5). No long CAT5 thermostat runs back to the store node. |
 | RTU power | Straight from the RTU **24VAC transformer** -> **~1A inline fuse** -> 24VAC-to-5VDC buck |
-| C (common) | **Required** at the unit (buck return + optocoupler reference). Taken at the unit. Not needed at the thermostat. |
+| C (common) | **Required** at the unit (buck return + optocoupler reference). Taken at the unit. (Oct 17: there is no thermostat anymore; the plate gets 5VDC + GND, not C) |
 | Call labels | W = heat, G = fan, Y1 = 1st cool, Y2 = 2nd cool, R = 24VAC hot, C = common |
-| Staging | Y1 always first; Y2 only if Y1 can't carry load; Y2 never without Y1 (fault); shed Y2 then Y1; restore Y1 then Y2 |
+| Staging | Y1 always first; Y2 only if Y1 can't carry load; Y2 never without Y1 (fault); shed Y2 then Y1; restore Y1 then Y2 (**unchanged Oct 17**) |
 | Room plates | ESP32-C3 + DS18B20; LEDs green/red/blue; no buttons; 5V+GND from RTU buck; battery not practical at 30 s |
+| **Thermostats (Oct 17)** | **Old wall thermostats REMOVED.** Room plates take their place on the wall |
+| **Room plate (Oct 17)** | ESP32-C3 + DS18B20 room temp + small **OLED (SSD1306, I2C)** showing room temp + LEDs GPIO5 green fan / GPIO6 red heat / GPIO7 blue cool. **No buttons; nobody can change settings at the plate** |
+| **Plate power (Oct 17)** | **2 existing thermostat-cable conductors repurposed** to carry **5VDC + GND** from the RTU's 24VAC->5VDC buck. **NOT 24VAC.** The other existing conductors are no longer thermostat calls |
+| **Who makes the calls (Oct 17)** | The **per-RTU ESP32** drives W/Y1/Y2/G itself through relay outputs (R to each call terminal at the RTU terminal bar), using plate room temp + setpoints/schedules from the Command Center. Supersedes "original thermostat stays primary" and the NC shed-in-series concept |
+| **Local autonomy (Oct 17)** | Each RTU ESP32 stores its schedule/setpoints locally and keeps running if internet / Pi / Mac fail |
+| **Interlock (Oct 17)** | Heat and cool never both on |
 | Prefer free/local | Yes; Andy has no new laptop yet |
 | Docker on Mac mini | Broken -- do not rely on it; use user-space Node + MySQL |
 | Old Home Assistant | `~/bk-hq` unused |
@@ -87,7 +121,24 @@ These are settled. Do not re-litigate unless Andy explicitly changes them.
 
 ## 3. Architecture + wiring
 
-### High-level path
+### High-level path (Oct 17 -- current)
+
+```text
+[Room plate ESP32-C3 x4]  DS18B20 + OLED + LEDs, no buttons
+   |  power: 5VDC + GND on 2 repurposed thermostat conductors (from RTU buck)
+   |  data:  Wi-Fi MQTT (room temp)
+   v
+[ESP32 RTU node x up to 5] -- relays: R -> G / W (/W2) / Y1 / Y2 --> [RTU terminal bar]
+   |  local schedule + setpoints; fallback = return-air DS18B20; safe default
+   |  Wi-Fi MQTT
+   v
+[Raspberry Pi: Mosquitto + edge agent] <--Wi-Fi MQTT-- [ESP32 store node]
+   |  LAN / Cloudflare tunnel
+   v
+[Command Center on Mac mini]  (setpoints + schedules; https://bkems.info)
+```
+
+### High-level path (Oct 5 -- SUPERSEDED Oct 17, kept for history)
 
 ```text
 [Original RTU thermostats] ==== primary control ==== [RTU equipment]
@@ -115,25 +166,64 @@ These are settled. Do not re-litigate unless Andy explicitly changes them.
 - Own ESP32 at the unit.
 - Power: transformer R/C -> **~1A inline fuse** -> buck (5V out, input >=36VAC/~50VDC, 1A+) -> ESP32 + shed relays.
 - **C required** at the unit.
-- Proposed optocoupler inputs: W GPIO32, Y1 GPIO33, Y2 GPIO27 (optional), G GPIO25, W2 GPIO13 (optional). Debounce 50-100 ms.
-- Proposed shed relays (NC in series): stage1 GPIO26 on Y1; stage2 GPIO19 on Y2 (optional).
+- Proposed optocoupler inputs: W GPIO32, Y1 GPIO33, Y2 GPIO27 (optional), G GPIO25, W2 GPIO13 (optional). Debounce 50-100 ms. *(Oct 17: there is no thermostat to sense anymore; inputs may be kept to verify our own call outputs actually reached the terminal bar -- TBD.)*
+- ~~Proposed shed relays (NC in series): stage1 GPIO26 on Y1; stage2 GPIO19 on Y2 (optional).~~ **SUPERSEDED (Oct 17):** replaced by **call output relays** for G, W (W2 if present), Y1, Y2 -- see section 3A. GPIOs **PROPOSED/TBD**.
 - Proposed MQTT deviceKey: `store-{id}-rtu{n}` (e.g. `store-791-rtu1`) -- **awaiting Andy's OK**.
 
 ### Room sensor plates x4
 
 - ESP32-C3 + DS18B20; LEDs GPIO5 green / GPIO6 red / GPIO7 blue; proposed data GPIO4.
-- Fed 5V+GND from the RTU buck (CAT5 ok). Keep >=4.5V at the plate under Wi-Fi load.
+- **Oct 17:** adds a small **SSD1306 I2C OLED** showing room temp (proposed **SDA GPIO8 / SCL GPIO9**). No buttons. Mounted where the old thermostat was.
+- Fed 5V+GND from the RTU buck over **2 repurposed conductors of the existing thermostat cable** (CAT5 also ok). Keep >=4.5V at the plate under Wi-Fi load.
 
 ### Pin tables
 
-Full tables live in `wiring/BKEMS-Pin-Table.md` (rev 3). Printable step-by-step directions with checkboxes: `wiring/BKEMS-Wiring-Directions.md`.
+Full tables live in `wiring/BKEMS-Pin-Table.md` (rev 3). **Rev 3 still shows thermostat sensing + NC shed relays; it must be redrawn for the Oct 17 thermostat replacement (next step).** Printable step-by-step directions with checkboxes: `wiring/BKEMS-Wiring-Directions.md`.
 
 ### Safety (repeat)
 
 - Never 24VAC on ESP32 pins.
 - Common GND between each relay board and its ESP32.
-- NC fail-safe on all shed / lighting channels.
-- Bench only; no compressor control.
+- NC fail-safe on all lighting channels. *(Oct 17: HVAC shed relays are replaced by call output relays -- see 3A.)*
+- Bench only; no field actuation until gates pass. (The RTU node will make Y1/Y2 cooling calls once installed; fridge/walk-in compressor control stays out of scope.)
+
+---
+
+## 3A. Thermostat replacement + RTU control (LOCKED Oct 17, 2026)
+
+**Decision:** the old wall thermostats are **removed**. Each RTU's own ESP32 is now the controller for that unit. This **supersedes** "original thermostat stays primary" and the "NC shed relay in series with the thermostat's Y wire" concept (old text kept above, marked SUPERSEDED).
+
+### Room plate (replaces the thermostat on the wall)
+
+| Item | Value |
+|---|---|
+| Board | ESP32-C3 |
+| Room temp | DS18B20, data proposed GPIO4, 4.7k pull-up to 3V3 |
+| Display | Small OLED, **SSD1306 I2C**, shows room temp. Proposed **SDA GPIO8 / SCL GPIO9** (**PROPOSED -- confirm on bench**) |
+| LEDs | GPIO5 **green = fan**, GPIO6 **red = heat**, GPIO7 **blue = cool** (~330 ohm each) |
+| Buttons | **None.** Nobody can change settings at the plate. Setpoints/schedules come only from the Command Center |
+| Power | **5VDC + GND** on **2 conductors of the existing thermostat cable**, fed from the RTU's 24VAC->5VDC buck. **NOT 24VAC.** Keep >=4.5V at the plate under Wi-Fi load |
+| Other conductors | No longer thermostat calls. Leave them unused / insulated at both ends (label them) |
+| Data | Wi-Fi MQTT, room temp ~30 s, to the matching RTU node |
+
+### RTU node makes the calls
+
+- The RTU ESP32 drives **relay outputs** that connect **R to each call terminal** (G, W, W2 if present, Y1, Y2) on the RTU terminal bar.
+- It decides using **plate room temp** + **setpoints / schedules from the Command Center**.
+- Hardware change: the RTU node now needs **output relays for G, W (and W2 if present), Y1, Y2** instead of shed relays.
+- **GPIO assignment for the output relays: PROPOSED / TBD** (not chosen yet; candidates can reuse the old shed-relay/opto pins after the redraw).
+- Power stays the same: RTU transformer R/C -> ~1A inline fuse -> 24VAC->5VDC buck -> ESP32 + relay coils + plate feed. **Never 24VAC on an ESP32 pin.**
+
+### Safeguards (record of what the firmware must do)
+
+| Safeguard | Rule |
+|---|---|
+| Local autonomy | Each RTU ESP32 **stores its schedule and setpoints locally** and keeps running if the internet, Pi, or Mac fail |
+| Stale plate data | If plate data is older than **~5 min**, fall back to the **return-air DS18B20** at the RTU |
+| No valid temp at all | Run a **safe default**: **fan on during occupied hours**, **conservative heat setpoint to prevent freezing**, **no cooling** -- and **raise an alert** (exact values TBD) |
+| Staging (unchanged) | **Y1 first**; Y2 only after Y1 can't carry; **Y2 never without Y1**; shed **Y2 then Y1**; restore **Y1 then Y2** |
+| Anti-short-cycle | **300 s per stage**, each stage with its own timer |
+| Interlock | **Heat and cool never both on** (W/W2 and Y1/Y2 mutually exclusive) |
 
 ---
 
@@ -280,7 +370,10 @@ Until that is done, use LAN only: `http://10.0.0.217:3000/`.
 | Waterproof DS18B20 | **3 more** (4 total for cooler/freezer/dining/duct; room plates need more later) |
 | 12V DC supply | Only if using the big 16-ch / 8-ch boards instead of the 4-ch |
 | CAT5/6 + RJ45 breakouts | For 5V+GND runs (room plates) and general interconnect |
-| 24VAC optocoupler modules | Per RTU call signal (W/Y1/Y2/G/W2 as equipped) |
+| 24VAC optocoupler modules | Per RTU call signal (W/Y1/Y2/G/W2 as equipped) -- *Oct 17: may be optional now (only if we keep call verification)* |
+| Relay outputs per RTU (Oct 17) | 4-5 channels per RTU node (G, W, W2 if present, Y1, Y2), 5V coil, contacts rated for 24VAC |
+| SSD1306 I2C OLED (Oct 17) | **4** (one per room plate); check the OLED already in hand |
+| Return-air DS18B20 (Oct 17) | 1 per RTU (fallback sensor) |
 | ESP32-C3 | **4** for room plates |
 | 24VAC->5VDC buck | Per RTU: **5V out**, input >=**36VAC / ~50VDC**, **1A+**. A 2.5-3.5V or AC-30V-max module will **not** work |
 | ESP32 per RTU node | Up to 5 (in addition to the store node) |
@@ -295,14 +388,15 @@ Until that is done, use LAN only: `http://10.0.0.217:3000/`.
 
 | Path | What |
 |---|---|
-| `BKEMS-MASTER-RESTART-2026-10-05.md` (+ PDF) | **This file** -- clean restart point |
+| `BKEMS-MASTER-RESTART-2026-10-17.md` (+ PDF) | **This file** -- current clean restart point |
+| `BKEMS-MASTER-RESTART-2026-10-05.md` (+ PDF) | Previous snapshot (superseded by this file) |
 | `BKEMS-COMPLETE-PLAN.md` | Older consolidated plan (Sept 17) -- superseded on architecture by this file |
 | `BKEMS-Master-Plan.md` | Long-form master plan |
 | `BKEMS-Plan-Summary.md` | 1-page executive summary |
 | `handwritten-notes-extract.md` | Privacy-scrubbed notes extract |
-| `BKEMS-Room-Sensor-Build-Note.md` | Room plate concept (battery notes outdated; prefer line power from buck) |
+| `BKEMS-Room-Sensor-Build-Note.md` | Room plate concept (battery notes outdated; prefer line power from buck; "thermostat stays primary" line superseded Oct 17) |
 | `BKEMS-Missing-Parts.md` | Parts list (Oct 4; add RTU ESP32s + fuses from this restart file) |
-| `wiring/*` | Diagram rev 3, pin table, directions, `gen_dot.py` |
+| `wiring/*` | Diagram rev 3, pin table, directions, `gen_dot.py` -- **need redraw for Oct 17 thermostat replacement** |
 | `zip-extract/BKEMS-API-Contract-v1.0.md` | MQTT contract v1.0 text |
 | `zip-extract/app/` | Command Center source snapshot / extract |
 
@@ -312,8 +406,8 @@ Until that is done, use LAN only: `http://10.0.0.217:3000/`.
 |---|---|
 | `/` | Command Center app (default branch @ `286ff61` when this snapshot was written) |
 | `docs/API_CONTRACT.md` | Contract in-repo |
-| `docs/BKEMS-MASTER-RESTART.md` | Copy of this restart file (pushed Oct 5) |
-| `docs/wiring/` | Diagram, pin table, directions, generator |
+| `docs/BKEMS-MASTER-RESTART.md` | Copy of the restart file (pushed Oct 5; master + wiring rev 3 docs re-pushed Oct 13, commit `c2167f07`). **Oct 17 version not pushed yet** |
+| `docs/wiring/` | Diagram, pin table, directions, generator (rev 3) |
 
 ### On Mac mini
 
@@ -321,6 +415,8 @@ Until that is done, use LAN only: `http://10.0.0.217:3000/`.
 |---|---|
 | `~/bkems-system-` | Live repo checkout |
 | `~/bkems-prod.log` | Production log |
+| `~/.cloudflared/config.yml` | Tunnel config for `bkems` |
+| `~/cf-tunnel.log` | Tunnel log (since Oct 16 manual restart) |
 | `~/local/bin` | Node, cloudflared |
 | `~/local/mysql` + `~/local/mysql-data` | User-space MySQL |
 | `~/bk-hq` | Old Home Assistant -- unused |
@@ -331,6 +427,7 @@ Until that is done, use LAN only: `http://10.0.0.217:3000/`.
 - "BK DoorDash window, one file" -- same, separate project
 - "BKEMS bench wiring diagram and pin table (draft, Oct 5)" -- **superseded**
 - "BKEMS bench wiring diagram and pin table (rev 2, Oct 5)" -- superseded by rev 3 materials in this folder / GitHub
+- "BKEMS master backup file (updated Oct 17) - thermostat replacement" -- this file (PDF + .md attached)
 
 ---
 
@@ -348,20 +445,27 @@ Still need Andy's call (or a bench measurement) before freezing firmware / produ
 8. Seasonal cool lockout (Nov-Mar / fan-only) exact behavior for Phase 6+
 9. Whether soffit lights use `relay_spare_ch4` or a new key later
 10. Local Uno/touchscreen backup UI -- keep deferred?
+11. **OLED pins (Oct 17):** proposed SDA GPIO8 / SCL GPIO9 on the ESP32-C3 -- confirm on bench (note GPIO8/9 are strapping pins on the C3; verify boot is clean with the OLED attached)
+12. **RTU output relay GPIOs (Oct 17):** G, W, W2 (if present), Y1, Y2 -- **TBD**
+13. **Exact fallback setpoints (Oct 17):** freeze-protection heat setpoint, occupied-hours definition for safe-default fan, stale-data threshold (~5 min)
+14. **Wiring diagram + pin table redraw (Oct 17):** rev 3 shows thermostat sensing + NC shed relays; needs a rev 4 for thermostat replacement -- **next step**
+15. **RTU ESP32 itself failing (Oct 17, to decide):** with thermostats gone, a dead RTU node means no calls. Decide on hardware watchdog / relay default / alert behavior (and freeze risk in winter)
 
 ---
 
 ## 9. Next steps in order
 
-1. **Keep this restart file + wiring rev 3** as the clean starting point (done in this snapshot).
+1. **Keep this restart file** (Oct 17) as the clean starting point.
+    - **NEXT: redraw the wiring diagram + pin table (rev 4)** for the thermostat replacement: room plate with OLED, 5VDC+GND on repurposed thermostat conductors, RTU call output relays (G/W/W2/Y1/Y2), return-air DS18B20.
+    - Pick OLED pins, RTU output relay GPIOs, and fallback setpoints (section 8, items 11-15).
 2. Andy confirms **RTU deviceKey** naming (`store-{id}-rtu{n}` or alternate).
 3. Buy / obtain missing parts (DS18B20s, optocouplers, bucks, ESP32-C3x4, RTU ESP32s, ~1A fuses, CAT5).
 4. **Bench store node** per `wiring/BKEMS-Wiring-Directions.md` section A (power, 4-ch relay, probes, photocell, door opto).
-5. **Bench one RTU node** on a 24VAC transformer per section B (fuse -> buck -> optos -> shed NC).
+5. **Bench one RTU node** on a 24VAC transformer (fuse -> buck -> call output relays per rev 4; the rev 3 section B opto/shed steps are superseded).
 6. Meter checks from section D (24-28VAC R-C, 5V buck, >=4.5V at plate).
 7. Finish Pi access (username + SSH key); install Mosquitto + edge agent later.
 8. Cloudflare path for `bkems.info` (Andy adds site -> nameservers -> IONOS swap -> `cloudflared` tunnel to `:3000`).
-9. Optional: LaunchAgents / cron so MySQL + `npm start` survive reboot.
+9. LaunchAgents (launchd **KeepAlive**) so the **Cloudflare tunnel**, MySQL, and `npm start` restart on their own (tunnel auto-restart offered Oct 16, not yet done).
 10. Only after bench fail-safe gates: monitor-only pilot -> later enable control phases.
 
 ---
@@ -390,10 +494,10 @@ neato -n -Tpdf -o BKEMS-Wiring-Diagram.pdf BKEMS-Wiring-Diagram.dot
 
 ---
 
-*End of BKEMS Master Restart -- Oct 5, 2026. Prefer this file over older plan docs when they conflict.*
+*End of BKEMS Master Restart -- Oct 17, 2026 (built on the Oct 5 snapshot). Prefer this file over older plan docs when they conflict.*
 
 
-## Live status (updated Oct 5 afternoon)
+## Live status (updated Oct 5 afternoon -- history; see section 1A for Oct 6-16)
 
 - **https://bkems.info** and **https://www.bkems.info** are live. They reach the Mac mini Command Center through Cloudflare Tunnel `bkems` (id `8b520579-13cb-46b3-aa26-c366d7e5338e`).
 - Nameservers: `kianchau.ns.cloudflare.com`, `mia.ns.cloudflare.com`.
