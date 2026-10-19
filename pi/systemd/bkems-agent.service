@@ -1,0 +1,15 @@
+[Unit]
+Description=BKEMS serial edge agent (ESP32 bridge <-> MQTT)
+After=network.target mosquitto.service
+Wants=mosquitto.service
+
+[Service]
+User=bkems
+Group=dialout
+EnvironmentFile=-/etc/default/bkems
+ExecStart=/usr/bin/python3 -u /opt/bkems/edge/bkems_serial_agent.py
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target

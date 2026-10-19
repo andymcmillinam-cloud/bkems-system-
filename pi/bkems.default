@@ -1,0 +1,8 @@
+# /etc/default/bkems  (no secrets here; local Mosquitto has no auth, localhost only)
+BKEMS_SERIAL=/dev/serial/by-id/usb-Silicon_Labs_CP2102_USB_to_UART_Bridge_Controller_0001-if00-port0
+BKEMS_BAUD=115200
+BKEMS_MQTT_HOST=127.0.0.1
+BKEMS_MQTT_PORT=1883
+BKEMS_DEVICE_KEY=store-791-gw
+BKEMS_WEB_PORT=8080
+BKEMS_OVERRIDE_SECS=1800

@@ -1,0 +1,94 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>BKEMS · Store 791 · Rooftop Units</title>
+<style>
+  :root{--bg:#0b0b0d;--card:#17171b;--line:#2a2a31;--txt:#f4f4f5;--mut:#a1a1aa;--on:#22c55e;--off:#3f3f46;--shed:#f59e0b;--bad:#ef4444;--bk:#d62300}
+  *{box-sizing:border-box}body{margin:0;font:15px/1.4 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;background:var(--bg);color:var(--txt)}
+  header{display:flex;align-items:center;gap:12px;padding:14px 20px;border-bottom:1px solid var(--line)}
+  header b{color:var(--bk);font-size:18px}header span{color:var(--mut)}
+  main{padding:20px;display:grid;gap:16px;grid-template-columns:repeat(auto-fill,minmax(340px,1fr));max-width:1200px}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:16px}
+  .row{display:flex;align-items:center;justify-content:space-between;gap:8px}
+  h2{margin:0;font-size:18px}.pill{font-size:12px;padding:3px 9px;border-radius:99px;background:var(--off)}
+  .pill.ok{background:#14532d;color:#bbf7d0}.pill.bad{background:#7f1d1d;color:#fecaca}.pill.warn{background:#78350f;color:#fde68a}
+  .relays{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin:14px 0}
+  .relay{border:1px solid var(--line);border-radius:10px;padding:8px;text-align:center}
+  .relay .dot{width:16px;height:16px;border-radius:50%;margin:4px auto;background:var(--off)}
+  .relay.on .dot{background:var(--on);box-shadow:0 0 10px var(--on)}.relay.shed .dot{outline:2px solid var(--shed)}
+  .relay small{display:block;color:var(--mut);font-size:11px}
+  .relay button{margin-top:6px;font-size:11px;padding:3px 6px}
+  .big{display:flex;gap:10px;margin:8px 0}
+  button{cursor:pointer;border:0;border-radius:10px;padding:10px 14px;font-weight:600;color:#fff;background:#3f3f46}
+  button:disabled{opacity:.5;cursor:wait}
+  .b-on{background:#15803d;flex:1;font-size:16px}.b-off{background:#b91c1c;flex:1;font-size:16px}
+  .meta{color:var(--mut);font-size:13px}.meta b{color:var(--txt);font-weight:500}
+  pre{background:#000;border:1px solid var(--line);border-radius:10px;padding:10px;font-size:12px;max-height:280px;overflow:auto;white-space:pre-wrap;margin:0}
+  .wide{grid-column:1/-1}#msg{min-height:20px;font-size:13px}
+</style>
+</head>
+<body>
+<header><b>BKEMS</b><span>Store 791 · Rooftop units · served from the store Pi</span><span style="margin-left:auto" id="link"></span></header>
+<main id="main">
+  <section class="card wide" id="logcard"><div class="row"><h2>Bridge serial (live)</h2><span class="meta" id="bridge"></span></div><pre id="log">waiting…</pre></section>
+</main>
+<script>
+const NAMES={w:"W heat",y1:"Y1 cool 1",y2:"Y2 cool 2",g:"G fan"},BITS={w:1,y1:2,y2:4,g:8};
+const main=document.getElementById('main'),logcard=document.getElementById('logcard');
+const cards={};let busy=false;
+function card(n){
+  if(cards[n])return cards[n];
+  const el=document.createElement('section');el.className='card';el.id='rtu'+n;
+  el.innerHTML=`<div class="row"><h2>RTU ${n}</h2><span class="pill" data-k="st">…</span></div>
+  <div class="relays">${Object.keys(BITS).map(k=>`<div class="relay" data-r="${k}"><div class="dot"></div>${k.toUpperCase()}<small>${NAMES[k]}</small>
+   <button data-relay="${k}">toggle</button></div>`).join('')}</div>
+  <div class="big"><button class="b-on" data-a="on">Turn on</button><button class="b-off" data-a="off">Turn off</button></div>
+  <div class="row" style="margin:8px 0"><button data-a="auto">Auto (release)</button><button data-a="identify">Identify</button></div>
+  <div class="meta" data-k="meta"></div><div id="msg" data-k="msg"></div>`;
+  main.insertBefore(el,logcard);
+  el.addEventListener('click',e=>{
+    const b=e.target.closest('button');if(!b)return;
+    if(b.dataset.a)send(n,b.dataset.a);
+    if(b.dataset.relay){const on=!el.querySelector(`[data-r=${b.dataset.relay}]`).classList.contains('on');send(n,`relay/${b.dataset.relay}/${on?'on':'off'}`);}
+  });
+  return cards[n]=el;
+}
+async function send(n,path){
+  const el=card(n),msg=el.querySelector('[data-k=msg]');
+  el.querySelectorAll('button').forEach(b=>b.disabled=true);msg.textContent='sending '+path+'…';
+  try{const r=await fetch(`/api/rtu/${n}/${path}`,{method:'POST'});const j=await r.json();
+      msg.textContent=r.ok?`sent ${path} (id ${j.command.id}) – waiting for RTU…`:'error: '+(j.error||r.status);
+      if(r.ok)el.dataset.pending=j.command.id;}
+  catch(e){msg.textContent='error: '+e}
+  setTimeout(()=>el.querySelectorAll('button').forEach(b=>b.disabled=false),800);
+}
+function fmtMask(m){return Object.keys(BITS).filter(k=>m&BITS[k]).map(k=>k.toUpperCase()).join('+')||'none'}
+async function poll(){
+  try{
+    const j=await (await fetch('/api/state',{cache:'no-store'})).json();const t=j.telemetry||{};
+    const br=t.bridge||{};
+    document.getElementById('link').innerHTML=`<span class="pill ${j.mqttConnected&&br.connected&&j.telemetryAgeS<30?'ok':'bad'}">bridge ${br.connected?'connected':'DOWN'} · fw ${t.firmware||'?'}</span>`;
+    document.getElementById('bridge').textContent=br.serial?`${br.serial} · last line ${br.lastLineAgeS}s ago`:'';
+    const rtus=t.rtus||{};if(!rtus['1'])card(1);
+    for(const [n,r] of Object.entries(rtus)){
+      const el=card(n);
+      const st=el.querySelector('[data-k=st]');
+      st.className='pill '+(r.online?(r.shed?'warn':'ok'):'bad');
+      st.textContent=r.online?(r.shed?'SHED (held off)':(r.relaysMask?'RUNNING':'idle')):'NO LINK';
+      for(const k in BITS){const d=el.querySelector(`[data-r=${k}]`);d.classList.toggle('on',!!(r.relaysMask&BITS[k]));d.classList.toggle('shed',!!(r.shed&BITS[k]));}
+      el.querySelector('[data-k=meta]').innerHTML=`relays <b>${fmtMask(r.relaysMask)}</b> · call <b>${r.wanted==null?'?':fmtMask(r.wanted)}</b> · shed <b>${fmtMask(r.shed)}</b><br>up ${r.uptimeS}s · rssi ${r.rssi} dBm · seen ${Math.round(t.ts-r.seenTs)}s ago`;
+      const pend=el.dataset.pending;
+      if(pend){const c=(t.commands||[]).find(c=>c.id===pend);
+        if(c){const m=el.querySelector('[data-k=msg]');
+          m.textContent=c.error?('error: '+c.error):`${c.request.action}${c.request.relay?' '+c.request.relay:''}: sent [${c.lines.join(' ; ')}] · ACKs ${c.acks.length}/${c.tx.length}`;
+          if(c.error||(c.tx.length&&c.acks.length>=c.tx.length))delete el.dataset.pending;}}
+    }
+    document.getElementById('log').textContent=(j.serial||[]).map(s=>new Date(s.ts*1000).toLocaleTimeString()+'  '+s.line).reverse().join('\n')||'no serial lines yet';
+  }catch(e){document.getElementById('link').innerHTML='<span class="pill bad">Pi web unreachable</span>'}
+}
+card(1);poll();setInterval(poll,1500);
+</script>
+</body>
+</html>
