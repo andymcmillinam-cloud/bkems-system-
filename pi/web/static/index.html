@@ -23,9 +23,15 @@
   .big{display:flex;gap:10px;margin:8px 0}
   button{cursor:pointer;border:0;border-radius:10px;padding:10px 14px;font-weight:600;color:#fff;background:#3f3f46}
   button:disabled{opacity:.5;cursor:wait}
-  .b-on{background:#15803d;flex:1;font-size:16px}.b-off{background:#b91c1c;flex:1;font-size:16px}
+  .b-on{background:#15803d;flex:1;font-size:16px}.b-off{background:#b91c1c;flex:1;font-size:16px}.b-tg{flex:1;font-size:15px}.b-tg small{display:block;font-weight:400;font-size:11px}
+  .b-tg[data-tg=heat].act{background:#c2410c}.b-tg[data-tg=cool].act{background:#1d4ed8}.b-tg[data-tg=fan].act{background:#15803d}
   .meta{color:var(--mut);font-size:13px}.meta b{color:var(--txt);font-weight:500}
   pre{background:#000;border:1px solid var(--line);border-radius:10px;padding:10px;font-size:12px;max-height:280px;overflow:auto;white-space:pre-wrap;margin:0}
+  .temps{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin:12px 0}
+  .tbox{border:1px solid var(--line);border-radius:12px;padding:10px;text-align:center}
+  .tbox small{display:block;color:var(--mut);font-size:12px}.tbox .v{font-size:30px;font-weight:700}
+  .tgt{display:flex;align-items:center;justify-content:center;gap:10px}.tgt button{font-size:22px;padding:4px 14px}
+  .modes{display:flex;gap:6px;align-items:center;margin:6px 0}.modes button{flex:1;padding:7px}.modes button.sel{background:#1d4ed8}
   .wide{grid-column:1/-1}#msg{min-height:20px;font-size:13px}
 </style>
 </head>
@@ -44,21 +50,29 @@ function card(n){
   el.innerHTML=`<div class="row"><h2>RTU ${n}</h2><span class="pill" data-k="st">…</span></div>
   <div class="relays">${Object.keys(BITS).map(k=>`<div class="relay" data-r="${k}"><div class="dot"></div>${k.toUpperCase()}<small>${NAMES[k]}</small>
    <button data-relay="${k}">toggle</button></div>`).join('')}</div>
+  <div class="temps"><div class="tbox"><small>Room</small><div class="v" data-k="room">--</div><small data-k="roomsub"></small></div>
+   <div class="tbox"><small>Target</small><div class="tgt"><button data-t="-1">−</button><div class="v" data-k="tgt">72°F</div><button data-t="1">+</button></div><small>60–85°F</small></div></div>
+  <div class="modes"><span class="meta">Thermostat:</span>${['off','cool','heat','auto'].map(m=>`<button data-mode="${m}">${m[0].toUpperCase()+m.slice(1)}</button>`).join('')}</div>
+  <div class="meta" data-k="ts"></div>
   <div class="big"><button class="b-on" data-a="on">Turn on</button><button class="b-off" data-a="off">Turn off</button></div>
+  <div class="big"><button class="b-tg" data-tg="heat">HEAT (W)<small data-s="heat">off</small></button><button class="b-tg" data-tg="cool">COOL (Y1/Y2)<small data-s="cool">off</small></button><button class="b-tg" data-tg="fan">FAN (G)<small data-s="fan">off</small></button></div>
   <div class="row" style="margin:8px 0"><button data-a="auto">Auto (release)</button><button data-a="identify">Identify</button></div>
   <div class="meta" data-k="meta"></div><div id="msg" data-k="msg"></div>`;
   main.insertBefore(el,logcard);
   el.addEventListener('click',e=>{
     const b=e.target.closest('button');if(!b)return;
     if(b.dataset.a)send(n,b.dataset.a);
+    if(b.dataset.tg)send(n,`toggle/${b.dataset.tg}/${b.classList.contains('act')?'off':'on'}`);
+    if(b.dataset.t)send(n,'target',{delta:+b.dataset.t});
+    if(b.dataset.mode)send(n,'thermostat',{mode:b.dataset.mode});
     if(b.dataset.relay){const on=!el.querySelector(`[data-r=${b.dataset.relay}]`).classList.contains('on');send(n,`relay/${b.dataset.relay}/${on?'on':'off'}`);}
   });
   return cards[n]=el;
 }
-async function send(n,path){
+async function send(n,path,body){
   const el=card(n),msg=el.querySelector('[data-k=msg]');
   el.querySelectorAll('button').forEach(b=>b.disabled=true);msg.textContent='sending '+path+'…';
-  try{const r=await fetch(`/api/rtu/${n}/${path}`,{method:'POST'});const j=await r.json();
+  try{const r=await fetch(`/api/rtu/${n}/${path}`,body?{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}:{method:'POST'});const j=await r.json();
       msg.textContent=r.ok?`sent ${path} (id ${j.command.id}) – waiting for RTU…`:'error: '+(j.error||r.status);
       if(r.ok)el.dataset.pending=j.command.id;}
   catch(e){msg.textContent='error: '+e}
@@ -79,11 +93,21 @@ async function poll(){
       st.textContent=r.online?(r.shed?'SHED (held off)':(r.relaysMask?'RUNNING':'idle')):'NO LINK';
       for(const k in BITS){const d=el.querySelector(`[data-r=${k}]`);d.classList.toggle('on',!!(r.relaysMask&BITS[k]));d.classList.toggle('shed',!!(r.shed&BITS[k]));}
       el.querySelector('[data-k=meta]').innerHTML=`relays <b>${fmtMask(r.relaysMask)}</b> · call <b>${r.wanted==null?'?':fmtMask(r.wanted)}</b> · shed <b>${fmtMask(r.shed)}</b><br>up ${r.uptimeS}s · rssi ${r.rssi} dBm · seen ${Math.round(t.ts-r.seenTs)}s ago`;
+      const th=(t.thermostat||{})[n]||r.thermostat||{};
+      const wm=r.wanted||0,rm=r.relaysMask||0;
+      const tg={heat:[wm&1,rm&1,'W'],cool:[wm&6,rm&6,(rm&4)?'Y1+Y2':'Y1'],fan:[wm&8,rm&8,'G']};
+      for(const k in tg){const b=el.querySelector(`[data-tg=${k}]`);b.classList.toggle('act',!!tg[k][0]);
+        el.querySelector(`[data-s=${k}]`).textContent=tg[k][1]?`ON · ${tg[k][2]} energized`:(tg[k][0]?'called…':'off');}
+      el.querySelector('[data-k=room]').textContent=r.roomTempF!=null?`Room ${r.roomTempF.toFixed(1)}°F`:'Room --';
+      el.querySelector('[data-k=roomsub]').textContent=r.roomTempF!=null?`${r.roomTempC.toFixed(1)}°C · DHT11 · ${r.tempAgeS}s ago`:'no reading';
+      if(th.targetF!=null)el.querySelector('[data-k=tgt]').textContent=`Target ${th.targetF}°F`;
+      el.querySelectorAll('[data-mode]').forEach(b=>b.classList.toggle('sel',b.dataset.mode===(th.mode||'off')));
+      el.querySelector('[data-k=ts]').textContent=`thermostat ${th.mode||'off'} · ${th.stage||'idle'}${th.reason?' · '+th.reason:''}${th.simulatedTempF!=null?' · SIMULATED '+th.simulatedTempF+'°F':''}`;
       const pend=el.dataset.pending;
       if(pend){const c=(t.commands||[]).find(c=>c.id===pend);
         if(c){const m=el.querySelector('[data-k=msg]');
-          m.textContent=c.error?('error: '+c.error):`${c.request.action}${c.request.relay?' '+c.request.relay:''}: sent [${c.lines.join(' ; ')}] · ACKs ${c.acks.length}/${c.tx.length}`;
-          if(c.error||(c.tx.length&&c.acks.length>=c.tx.length))delete el.dataset.pending;}}
+          m.textContent=c.error?('error: '+c.error):!c.lines.length?`${c.request.action}: saved`:`${c.request.action}${c.request.relay?' '+c.request.relay:''}: sent [${c.lines.join(' ; ')}] · ACKs ${c.acks.length}/${c.tx.length}`;
+          if(c.error||!c.lines.length||(c.tx.length&&c.acks.length>=c.tx.length))delete el.dataset.pending;}}
     }
     document.getElementById('log').textContent=(j.serial||[]).map(s=>new Date(s.ts*1000).toLocaleTimeString()+'  '+s.line).reverse().join('\n')||'no serial lines yet';
   }catch(e){document.getElementById('link').innerHTML='<span class="pill bad">Pi web unreachable</span>'}

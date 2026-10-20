@@ -8,10 +8,16 @@ GET  /                         RTU control page
 GET  /api/state                latest telemetry + recent bridge serial lines
 POST /api/rtu/<n>/on           Turn on   (call Y1+G = cooling stage 1 + fan)
 POST /api/rtu/<n>/off          Turn off  (drop calls + shed W/Y1/Y2/G)
+POST /api/rtu/<n>/heat           Heat on   (call W only)
 POST /api/rtu/<n>/auto         Release everything back to the RTU's local logic
 POST /api/rtu/<n>/identify     Blink the RTU's LCD backlight
 POST /api/rtu/<n>/relay/<w|y1|y2|g>/<on|off>   Single relay override
 Optional JSON body: {"durationS": 600}
+POST /api/rtu/<n>/target       {"targetF": 73} or {"delta": 1|-1}  (60..85 F, display/thermostat only)
+POST /api/rtu/<n>/thermostat   {"mode": "off|cool|heat|auto"}      (Pi-side thermostat, persisted)
+POST /api/rtu/<n>/toggle/<heat|cool|fan>/<on|off>   heat=W, cool=Y1(+Y2 if target<=room-5F), fan=G
+POST /api/rtu/<n>/simtemp      {"tempF": 75, "secs": 600} | {"tempF": null}   (test only)
+Manual on/off/auto/relay set the thermostat to off (handled in the agent).
 """
 import json
 import os
@@ -66,7 +72,8 @@ client.on_connect = on_connect
 client.on_message = on_message
 client.reconnect_delay_set(1, 30)
 
-ROUTE = re.compile(r"^/api/rtu/([1-5])/(on|off|auto|identify|relay/(w|y1|y2|g)/(on|off))$")
+ROUTE = re.compile(r"^/api/rtu/([1-5])/(on|off|heat|auto|identify|relay/(w|y1|y2|g)/(on|off))$")
+SETROUTE = re.compile(r"^/api/rtu/([1-5])/(target|thermostat|simtemp|toggle/(heat|cool|fan)/(on|off))$")
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -91,7 +98,8 @@ class Handler(BaseHTTPRequestHandler):
                 t = latest["telemetry"]
                 age = round(time.time() - latest["received"], 1) if latest["received"] else None
                 obj = {"telemetry": t, "telemetryAgeS": age, "agent": latest["agent"],
-                       "mqttConnected": client.is_connected(), "serial": list(serial_lines)[-25:]}
+                       "mqttConnected": client.is_connected(), "serial": list(serial_lines)[-25:],
+                       "thermostat": (t or {}).get("thermostat", {})}
             return self.send_json(200, obj)
         if path == "/healthz":
             return self.send_json(200, {"ok": True})
@@ -106,7 +114,52 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+    def read_opts(self):
+        ln = int(self.headers.get("Content-Length") or 0)
+        if not ln:
+            return {}
+        return json.loads(self.rfile.read(min(ln, 4096)) or b"{}")
+
+    def do_set(self, m):
+        n, what = int(m.group(1)), m.group(2)
+        try:
+            o = self.read_opts()
+            assert isinstance(o, dict)
+        except Exception:
+            return self.send_json(400, {"error": "bad json"})
+        cmd = {"id": uuid.uuid4().hex[:8], "rtu": n, "source": "web", "ts": time.time()}
+        try:
+            if what == "target":
+                if "delta" in o:
+                    d = int(o["delta"])
+                    if d not in (-1, 1):
+                        raise ValueError("delta must be -1 or 1")
+                    cmd.update(action="set_target", delta=d)
+                else:
+                    t = float(o["targetF"])
+                    cmd.update(action="set_target", targetF=max(60, min(85, int(round(t)))))
+            elif what.startswith("toggle/"):
+                cmd.update(action="toggle", what=m.group(3), on=(m.group(4) == "on"))
+            elif what == "thermostat":
+                mode = str(o.get("mode", "")).lower()
+                if mode not in ("off", "cool", "heat", "auto"):
+                    raise ValueError("mode must be off|cool|heat|auto")
+                cmd.update(action="set_mode", mode=mode)
+            else:
+                tf = o.get("tempF")
+                cmd.update(action="sim_temp", tempF=None if tf is None else float(tf),
+                           secs=int(o.get("secs") or 600))
+        except (KeyError, ValueError, TypeError) as e:
+            return self.send_json(400, {"error": str(e)})
+        if not client.is_connected():
+            return self.send_json(503, {"error": "mqtt not connected"})
+        info = client.publish(T_CMD, json.dumps(cmd), qos=1)
+        return self.send_json(202, {"ok": info.rc == 0, "command": cmd})
+
     def do_POST(self):
+        sm = SETROUTE.match(self.path.split("?")[0])
+        if sm:
+            return self.do_set(sm)
         m = ROUTE.match(self.path.split("?")[0])
         if not m:
             return self.send_json(404, {"error": "not found"})
