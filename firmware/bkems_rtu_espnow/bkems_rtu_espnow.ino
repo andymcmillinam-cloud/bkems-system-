@@ -30,8 +30,10 @@
   wanted/call, TX and ACK lines; RTU sends status right after a command.
   FW 1.2 (Oct 19 2026): break-before-make relay output + 200 ms heat/cool
   changeover dead-time, final W vs Y1/Y2 interlock at the pin stage.
+  FW 1.3 (Oct 19 2026): DHT11 room temp on IO4, read every 5 s into the
+  existing roomTempC10 status field (INT16_MIN = no reading). No packet change.
 */
-#define FW_VERSION "1.2"
+#define FW_VERSION "1.3"
 
 
 #include <Arduino.h>
@@ -40,6 +42,7 @@
 #include <esp_wifi.h>
 #include <Wire.h>
 #include <LiquidCrystal_I2C.h>
+#include <DHT.h>
 
 // ======================= NODE ID SCHEME ===========================
 // One byte. High nibble = node class, low nibble = instance.
@@ -75,6 +78,10 @@
 #define RELAY_ON  LOW      // Inland board is active-low
 #define RELAY_OFF HIGH
 #define RELAY_DEADTIME_MS 200   // W <-> Y1/Y2 changeover gap
+
+#define PIN_DHT   4
+#define TEMP_PERIOD_MS 5000
+DHT dht(PIN_DHT, DHT11);
 
 #define LCD_ADDR  0x27     // try 0x3F if the screen stays blank
 LiquidCrystal_I2C lcd(LCD_ADDR, 16, 2);
@@ -400,6 +407,14 @@ void drawLcd() {
   lcd.print(l2);
 }
 
+// DHT11 read: ~25 ms worst case, called after relay logic. NaN -> sentinel.
+void readTemp() {
+  float c = dht.readTemperature();
+  if (isnan(c) || c < -20 || c > 70) { roomTempC10 = INT16_MIN; Serial.println("DHT11: read failed"); }
+  else { roomTempC10 = (int16_t)lroundf(c * 10.0f);
+         Serial.printf("DHT11: %.1fC %.1fF\n", c, c * 1.8f + 32.0f); }
+}
+
 // ======================= SETUP / LOOP =============================
 void setup() {
   // Relays OFF before anything else.
@@ -409,6 +424,7 @@ void setup() {
   Wire.begin(PIN_SDA, PIN_SCL);
   lcd.init(); lcd.backlight(); lcd.clear();
   lcd.print("BKEMS starting");
+  dht.begin();
 
   WiFi.mode(WIFI_STA);
   WiFi.disconnect();
@@ -432,7 +448,7 @@ void setup() {
 }
 
 void loop() {
-  static uint32_t lastStatus = 0, lastBeat = 0, lastLcd = 0;
+  static uint32_t lastStatus = 0, lastBeat = 0, lastLcd = 0, lastTemp = 0;
   uint32_t now = millis();
 
   if (IS_RTU) {
@@ -455,6 +471,7 @@ void loop() {
       s.roomTempC10 = roomTempC10; s.uptimeS = now / 1000; s.rssi = lastRssi;
       sendRaw(&s, sizeof(s));
     }
+    if (now - lastTemp >= TEMP_PERIOD_MS) { lastTemp = now; readTemp(); }
   }
 
   if (IS_BRIDGE) bridgeSerialConsole();
