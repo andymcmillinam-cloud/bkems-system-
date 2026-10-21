@@ -34,6 +34,8 @@ if (!booted) {
   sweepTimer.unref?.();
   const mqttOn = await startMqttBridge();
   if (!mqttOn) startSimulator(15_000);
+  const { startRtu1Schedule } = await import("./services/rtu1Schedule");
+  startRtu1Schedule();
 }
 
 if (env.isProduction) {

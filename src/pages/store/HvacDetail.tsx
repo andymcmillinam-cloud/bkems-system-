@@ -5,6 +5,8 @@ import Layout from "@/components/Layout";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import LiveRtu1, { useRtu1 } from "@/components/LiveRtu1";
+import NumField from "@/components/NumField";
 import { Input } from "@/components/ui/input";
 import {
   WEEKDAYS,
@@ -24,6 +26,7 @@ export default function HvacDetail() {
   const [day, setDay] = useState<Weekday>("Mon");
   const [mode, setMode] = useState<"temps" | "manual" | "schedule">("temps");
   const [savedFlash, setSavedFlash] = useState(false);
+  const rtu1 = useRtu1(3000);
 
   useEffect(() => { setPrefs(loadHvacPrefs(restaurantId)); }, [restaurantId]);
 
@@ -38,9 +41,7 @@ export default function HvacDetail() {
     return <Layout><p className="text-slate-400">Loading…</p></Layout>;
   }
 
-  const ambient = Number(data.sensors.find((s) => s.kind === "AMBIENT")?.lastValue ?? 70);
-  const offsets = [0, -1.2, 0.8, -0.5, 1.5];
-  const rtuTemps = prefs.units.map((u, i) => ({ ...u, temp: ambient + (offsets[i] ?? 0) }));
+  const rtuTemps = prefs.units.map((u, i) => ({ ...u, temp: i === 0 ? rtu1.s?.rtu?.roomTempF ?? null : null }));
   const unit = prefs.units[unitIdx];
   const banner = data.restaurant.storeNumber?.replace(/^BK-0*/, "BK ") || data.restaurant.name;
   const hvacRelay = data.relays.find((r) => r.relayKey === "relay_hvac_shed_stage1");
@@ -58,7 +59,7 @@ export default function HvacDetail() {
       </div>
 
       <p className="text-xs text-slate-500 mb-3">
-        Original thermostats remain primary. RTU temps below are demo/supervisory placeholders derived from dining ambient until per-RTU sensors are online. Schedule UI is local autosave only (not sent to edge).
+        Rooftop 1 is LIVE (real room temp and relays). Rooftops 2–5 are not connected yet; their setpoint/schedule below is local autosave only (not sent to edge).
       </p>
 
       <div className="flex flex-wrap gap-2 mb-4">
@@ -80,34 +81,43 @@ export default function HvacDetail() {
             className={`rounded-lg border px-1 py-3 text-center transition-colors ${unitIdx === i ? "border-sky-500 bg-sky-950/50" : "border-slate-700 bg-slate-900 hover:border-slate-500"}`}
           >
             <p className="text-[10px] text-slate-500">{u.label}</p>
-            <p className="font-mono text-lg text-sky-300">{u.temp.toFixed(0)}°</p>
+            <p className={`font-mono text-lg ${i === 0 ? "text-sky-300" : "text-slate-600"}`}>{i === 0 ? (u.temp != null ? `${u.temp.toFixed(0)}°` : "—") : "N/C"}</p>
+            <p className="text-[9px] text-slate-500">{i === 0 ? "LIVE" : "not connected"}</p>
           </button>
         ))}
       </div>
 
-      {mode === "temps" && (
+      {unitIdx === 0 && <LiveRtu1 />}
+
+      {unitIdx !== 0 && (
+        <p className="text-sm text-amber-400/90 mb-3">{unit.label}: Not connected yet — no live data or control.</p>
+      )}
+
+      {unitIdx !== 0 && mode === "temps" && (
         <Card className="bg-slate-900 border-slate-700">
           <CardHeader><CardTitle className="text-slate-100 text-base">{unit.label} overview</CardTitle></CardHeader>
           <CardContent className="space-y-2 text-sm text-slate-300">
-            <div className="flex justify-between"><span>Room / return (stub)</span><span className="font-mono text-sky-300">{rtuTemps[unitIdx].temp.toFixed(1)}°F</span></div>
+            <div className="flex justify-between"><span>Room / return</span><span className="font-mono text-slate-500">Not connected yet</span></div>
             <div className="flex justify-between"><span>Saved setpoint (UI)</span><span className="font-mono">{unit.setpointF}°F</span></div>
             <div className="flex justify-between"><span>Shed relay (contract)</span><span>{hvacRelay ? `${hvacRelay.actualState ? "ENERGIZED" : "OFF"} · ${hvacRelay.mode}` : "—"}</span></div>
           </CardContent>
         </Card>
       )}
 
-      {mode === "manual" && (
+      {unitIdx !== 0 && mode === "manual" && (
         <Card className="bg-slate-900 border-slate-700">
           <CardHeader><CardTitle className="text-slate-100 text-base">Manual temperature · {unit.label}</CardTitle></CardHeader>
           <CardContent className="space-y-3">
             <label className="text-xs text-slate-400 space-y-1 block max-w-xs">
               Setpoint °F (autosave · not sent to RTU in Phase 1)
-              <Input
-                type="number"
-                className="bg-slate-800 border-slate-600 text-slate-100 h-10 text-lg font-mono"
+              <NumField
+                key={unitIdx}
+                min={60}
+                max={85}
+                className="w-full rounded-md px-3 bg-slate-800 border border-slate-600 text-slate-100 h-10 text-lg font-mono"
                 value={unit.setpointF}
-                onChange={(e) => {
-                  const units = prefs.units.map((u, i) => i === unitIdx ? { ...u, setpointF: Number(e.target.value) || 70 } : u);
+                onCommit={(v) => {
+                  const units = prefs.units.map((u, i) => i === unitIdx ? { ...u, setpointF: v } : u);
                   autosave({ units });
                 }}
               />
@@ -119,7 +129,7 @@ export default function HvacDetail() {
         </Card>
       )}
 
-      {mode === "schedule" && (
+      {unitIdx !== 0 && mode === "schedule" && (
         <Card className="bg-slate-900 border-slate-700">
           <CardHeader><CardTitle className="text-slate-100 text-base">{unit.label} · 1 ON / 1 OFF × 7 days</CardTitle></CardHeader>
           <CardContent>

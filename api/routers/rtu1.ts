@@ -4,6 +4,8 @@
 import { Hono } from "hono";
 import { getCookie, setCookie, deleteCookie } from "hono/cookie";
 import crypto from "crypto";
+import { getUserByToken, readSessionCookie } from "../services/auth";
+import { getSchedule, saveSchedule } from "../services/rtu1Schedule";
 
 const USER = process.env.RTU_LOGIN_USER || "andy";
 const PASS = process.env.RTU_LOGIN_PASS || "";
@@ -38,7 +40,7 @@ function limited(ip: string) {
 function addFail(ip: string) { const f = fails.get(ip) || []; f.push(Date.now()); fails.set(ip, f); globalFails.push(Date.now()); }
 const ipOf = (c: any) => c.req.header("cf-connecting-ip") || c.req.header("x-forwarded-for")?.split(",")[0].trim() || "local";
 
-async function pi(path: string, body?: unknown) {
+export async function pi(path: string, body?: unknown) {
   const ctl = new AbortController(); const to = setTimeout(() => ctl.abort(), 8000);
   try {
     const r = await fetch(PI + path, body === undefined ? { signal: ctl.signal } : {
@@ -75,10 +77,15 @@ rtu1.post("/rtu1/login", async (c) => {
 });
 rtu1.post("/rtu1/logout", (c) => { deleteCookie(c, COOKIE, { path: "/" }); return c.redirect("/rtu1/login", 303); });
 
-// Everything below needs a valid session.
-rtu1.use("/rtu1", async (c, next) => { if (!validToken(getCookie(c, COOKIE))) return c.redirect("/rtu1/login", 302); await next(); });
+// Everything below needs a valid session: the RTU cookie OR an active main-site (users/sessions) login.
+async function authed(c: any) {
+  if (validToken(getCookie(c, COOKIE))) return true;
+  const tok = readSessionCookie(c.req.raw); if (!tok) return false;
+  try { return !!(await getUserByToken(tok)); } catch (e: any) { console.error("[rtu1] session lookup failed:", e?.message); return false; }
+}
+rtu1.use("/rtu1", async (c, next) => { if (!(await authed(c))) return c.redirect("/rtu1/login", 302); await next(); });
 rtu1.use("/api/rtu1/*", async (c, next) => {
-  if (!validToken(getCookie(c, COOKIE))) return c.json({ error: "login required" }, 401);
+  if (!(await authed(c))) return c.json({ error: "login required" }, 401);
   if (c.req.method === "POST" && c.req.header("x-bkems-ui") !== "1") return c.json({ error: "bad request" }, 403); // CSRF guard
   await next();
 });
@@ -109,6 +116,11 @@ rtu1.post("/api/rtu1/thermostat", async (c) => {
   const b: any = await c.req.json().catch(() => ({}));
   if (!["off", "cool", "heat", "auto"].includes(b.mode)) return c.json({ error: "mode must be off|cool|heat|auto" }, 400);
   const r = await pi("/api/rtu/1/thermostat", { mode: b.mode }); return c.json(r.json, r.status as any);
+});
+rtu1.get("/api/rtu1/schedule", (c) => c.json(getSchedule()));
+rtu1.post("/api/rtu1/schedule", async (c) => {
+  const b: any = await c.req.json().catch(() => null);
+  const r = saveSchedule(b); return r.ok ? c.json(r.schedule) : c.json({ error: r.error }, 400);
 });
 rtu1.post("/api/rtu1/auto", async (c) => { const r = await pi("/api/rtu/1/auto", {}); return c.json(r.json, r.status as any); });
 
