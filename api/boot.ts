@@ -5,6 +5,7 @@ import { fetchRequestHandler } from "@trpc/server/adapters/fetch";
 import { appRouter } from "./router";
 import { createContext } from "./context";
 import { env } from "./lib/env";
+import { rtu1 } from "./routers/rtu1";
 
 const app = new Hono<{ Bindings: HttpBindings }>();
 
@@ -17,6 +18,7 @@ app.use("/api/trpc/*", async (c) => {
     createContext,
   });
 });
+app.route("/", rtu1); // Rooftop 1 control: own login + Pi proxy
 app.all("/api/*", (c) => c.json({ error: "Not Found" }, 404));
 
 export default app;
