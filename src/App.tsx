@@ -5,6 +5,7 @@ import StoreDetail from "./pages/StoreDetail";
 import StoreAdvanced from "./pages/StoreAdvanced";
 import TempsDetail from "./pages/store/TempsDetail";
 import LightsDetail from "./pages/store/LightsDetail";
+import RtuDetail from "@/pages/store/RtuDetail";
 import HvacDetail from "./pages/store/HvacDetail";
 import Alerts from "./pages/Alerts";
 import Admin from "./pages/Admin";
@@ -20,6 +21,7 @@ export default function App() {
       <Route path="/stores/:id/temps" element={<TempsDetail />} />
       <Route path="/stores/:id/lights" element={<LightsDetail />} />
       <Route path="/stores/:id/hvac" element={<HvacDetail />} />
+      <Route path="/stores/:id/hvac/:rtu" element={<RtuDetail />} />
       <Route path="/alerts" element={<Alerts />} />
       <Route path="/admin" element={<Admin />} />
       <Route path="/operator" element={<Operator />} />

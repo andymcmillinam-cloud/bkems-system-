@@ -1,4 +1,4 @@
-import { Link, useNavigate, useParams } from "react-router";
+import { Link, useParams } from "react-router";
 import { trpc } from "@/providers/trpc";
 import Layout from "@/components/Layout";
 import { useRtu } from "@/components/LiveRtu";
@@ -205,7 +205,7 @@ export default function StoreDetail() {
                 LIVE = connected rooftop · N/C = not connected yet
               </p>
               <p className="text-xs text-sky-500/80 group-hover:text-sky-400">
-                Tap for rooftop controls & schedules →
+                Tap for HVAC overview (all rooftops) →
               </p>
             </CardContent>
           </Card>
@@ -267,16 +267,13 @@ export default function StoreDetail() {
 }
 
 function RtuCell({ storeId, rtu }: { storeId: number; rtu: number }) {
-  const navigate = useNavigate();
   const { s } = useRtu(storeId, rtu, 5000);
   const live = s?.connected === true, t = s?.rtu?.roomTempF;
   return (
-    <button type="button" aria-label={`Open RTU ${rtu} controls`}
-      onClick={(e) => { e.preventDefault(); e.stopPropagation(); navigate(`/stores/${storeId}/hvac?rtu=${rtu}`); }}
-      className="w-full rounded-lg bg-slate-800/80 border border-slate-700 hover:border-sky-500 px-1 py-2 text-center">
+    <div className="w-full rounded-lg bg-slate-800/80 border border-slate-700 px-1 py-2 text-center">
       <p className="text-[10px] text-slate-500">RTU{rtu}</p>
       <p className={`font-mono text-sm ${live ? "text-sky-300" : "text-slate-600"}`}>{live ? (t != null ? t.toFixed(0) : "—") : "N/C"}</p>
       <p className="text-[9px] text-slate-500">{live ? "LIVE" : "not conn."}</p>
-    </button>
+    </div>
   );
 }
