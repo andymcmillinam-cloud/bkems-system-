@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Link, useParams } from "react-router";
+import { Link, useParams, useSearchParams } from "react-router";
 import { trpc } from "@/providers/trpc";
 import Layout from "@/components/Layout";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -21,7 +21,10 @@ export default function HvacDetail() {
   const { data, isLoading } = trpc.stores.storeDetail.useQuery({ restaurantId }, { refetchInterval: 10000 });
 
   const [prefs, setPrefs] = useState<HvacPrefs>(() => loadHvacPrefs(restaurantId));
-  const [unitIdx, setUnitIdx] = useState(0);
+  const [search, setSearch] = useSearchParams();
+  const qRtu = Number(search.get("rtu"));
+  const unitIdx = Number.isInteger(qRtu) && qRtu >= 1 && qRtu <= 5 ? qRtu - 1 : 0;
+  const setUnitIdx = (i: number) => setSearch({ rtu: String(i + 1) }, { replace: true });
   const [day, setDay] = useState<Weekday>("Mon");
   const [planner, setPlanner] = useState(false);
   const [savedFlash, setSavedFlash] = useState(false);
