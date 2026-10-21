@@ -1,41 +1,48 @@
-// Live Rooftop 1 (real relays via the store Pi). Polls /api/rtu1/state every 3s; controls call /api/rtu1/*.
-// Auth: the main-site session cookie is accepted by /api/rtu1/*. The Pi enforces the heat/cool interlock.
+// Live rooftop card for ANY store/RTU. Polls /api/rtu/<storeId>/<rtu>/state (3s when bound, 30s when not);
+// controls call /api/rtu/<storeId>/<rtu>/*. Unbound RTUs render the same card greyed with "Not connected"
+// and disabled controls (schedule settings can still be saved). Auth: main-site session cookie.
+// The store Pi enforces the heat/cool interlock.
 import { useCallback, useEffect, useState } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import NumField from "@/components/NumField";
 
-export type Rtu1State = {
+export type RtuState = {
+  connected?: boolean;
   rtu: null | { online: boolean; relaysMask: number; wanted: number; relaysText?: string; roomTempC?: number; roomTempF?: number; tempAgeS?: number };
   thermostat: null | { targetF?: number; mode?: string; stage?: string; reason?: string };
   bridgeFw?: string; error?: string;
 };
 type Sched = { enabled: boolean; occStart: string; occEnd: string; occTargetF: number; unoccTargetF: number; lastApplied?: string | null; phaseNow?: string };
 
-async function post(path: string, body: unknown = {}) {
-  const r = await fetch(`/api/rtu1/${path}`, { method: "POST", credentials: "same-origin",
+const base = (storeId: number, rtu: number) => `/api/rtu/${storeId}/${rtu}`;
+async function post(url: string, body: unknown = {}) {
+  const r = await fetch(url, { method: "POST", credentials: "same-origin",
     headers: { "Content-Type": "application/json", "x-bkems-ui": "1" }, body: JSON.stringify(body) });
   const j = await r.json().catch(() => ({}));
   if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
   return j;
 }
 
-export function useRtu1(intervalMs = 3000) {
-  const [s, setS] = useState<Rtu1State | null>(null);
+export function useRtu(storeId: number, rtu: number, intervalMs = 3000) {
+  const [s, setS] = useState<RtuState | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const poll = useCallback(async () => {
     try {
-      const r = await fetch("/api/rtu1/state", { cache: "no-store", credentials: "same-origin" });
+      const r = await fetch(`${base(storeId, rtu)}/state`, { cache: "no-store", credentials: "same-origin" });
       const j = await r.json().catch(() => ({}));
       if (r.status === 401) { setErr("login required"); return; }
       setS(j); setErr(r.ok ? null : j.error || `HTTP ${r.status}`);
     } catch { setErr("unreachable"); }
-  }, []);
-  useEffect(() => { poll(); const t = setInterval(poll, intervalMs); return () => clearInterval(t); }, [poll, intervalMs]);
+  }, [storeId, rtu]);
+  const every = s?.connected === false ? Math.max(intervalMs, 30000) : intervalMs;
+  useEffect(() => { setS(null); setErr(null); }, [storeId, rtu]);
+  useEffect(() => { poll(); const t = setInterval(poll, every); return () => clearInterval(t); }, [poll, every]);
   return { s, err, poll };
 }
 
-export function rtu1Status(s: Rtu1State | null, err: string | null) {
+export function rtuStatus(s: RtuState | null, err: string | null) {
+  if (s?.connected === false) return { text: "NOT CONNECTED", cls: "bg-slate-800 text-slate-400 border-slate-600" };
   if (err && !s?.rtu) return { text: err === "login required" ? "LOGIN" : "OFFLINE", cls: "bg-rose-900/50 text-rose-300 border-rose-700" };
   const u = s?.rtu;
   if (!u) return { text: "…", cls: "bg-slate-800 text-slate-300 border-slate-600" };
@@ -53,16 +60,20 @@ function Toggle({ label, sub, on, color, onClick, disabled }: { label: string; s
   );
 }
 
-export default function LiveRtu1({ showSchedule = true }: { showSchedule?: boolean }) {
-  const { s, err, poll } = useRtu1(3000);
+export default function LiveRtu({ storeId, rtu, showSchedule = true, compact = false, label }: {
+  storeId: number; rtu: number; showSchedule?: boolean; compact?: boolean; label?: string;
+}) {
+  const { s, err, poll } = useRtu(storeId, rtu, 3000);
+  const nc = s?.connected === false;
+  const [schedOpen, setSchedOpen] = useState(!compact);
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState("");
   const u = s?.rtu, th = s?.thermostat || {};
-  const st = rtu1Status(s, err);
+  const st = rtuStatus(s, err);
 
   const act = async (path: string, body?: unknown) => {
     setBusy(true); setMsg("");
-    try { await post(path, body); setMsg("sent ✓"); } catch (e: any) { setMsg(`error: ${e.message}`); }
+    try { await post(`${base(storeId, rtu)}/${path}`, body); setMsg("sent ✓"); } catch (e: any) { setMsg(`error: ${e.message}`); }
     setTimeout(() => setBusy(false), 600); setTimeout(poll, 1200);
   };
 
@@ -74,46 +85,47 @@ export default function LiveRtu1({ showSchedule = true }: { showSchedule?: boole
   };
   const sub = (k: keyof typeof T) => (T[k].run ? `ON · ${T[k].tag}` : T[k].want ? "called…" : "off");
   const mode = th.mode || "off";
+  const off = busy || nc || !u;
   const btn = "h-12 w-12 shrink-0 rounded-xl bg-slate-700 text-2xl font-bold text-white disabled:opacity-50";
 
   return (
-    <Card className="bg-slate-900 border-sky-700">
-      <CardHeader className="pb-2">
+    <Card className={`bg-slate-900 ${nc ? "border-slate-700" : "border-sky-700"} ${compact ? "text-sm" : ""}`}>
+      <CardHeader className={compact ? "p-3 pb-1" : "pb-2"}>
         <div className="flex items-center justify-between gap-2">
-          <CardTitle className="text-slate-100 text-lg">Rooftop 1 · LIVE</CardTitle>
+          <CardTitle className={`text-slate-100 ${compact ? "text-base" : "text-lg"}`}>{label ?? `Rooftop ${rtu}`}{nc ? "" : " · LIVE"}</CardTitle>
           <Badge className={`border ${st.cls}`}>{st.text}</Badge>
         </div>
       </CardHeader>
-      <CardContent className="space-y-4">
+      <CardContent className={`${compact ? "p-3 pt-1 space-y-3" : "space-y-4"} ${nc ? "opacity-60" : ""}`}>
         {err === "login required" && <p className="text-sm text-rose-300">Session expired — please sign in again.</p>}
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+        <div className={`grid gap-3 ${compact ? "grid-cols-1" : "grid-cols-1 sm:grid-cols-2"}`}>
           <div className="rounded-xl border border-slate-700 p-3 text-center">
             <p className="text-xs text-slate-400">Room</p>
-            <p className="text-4xl font-bold font-mono text-sky-300">{u?.roomTempF != null ? `${u.roomTempF.toFixed(1)}°F` : "--"}</p>
+            <p className={`${compact ? "text-3xl" : "text-4xl"} font-bold font-mono ${nc ? "text-slate-500" : "text-sky-300"}`}>{u?.roomTempF != null ? `${u.roomTempF.toFixed(1)}°F` : "--"}</p>
             <p className="text-[11px] text-slate-500">{u?.roomTempF != null ? `${u.roomTempC?.toFixed(1)}°C · ${u.tempAgeS}s ago` : "no reading"}</p>
           </div>
           <div className="rounded-xl border border-slate-700 p-3 text-center">
             <p className="text-xs text-slate-400">Target °F</p>
             <div className="flex items-center justify-center gap-2">
-              <button type="button" aria-label="Target down" disabled={busy || th.targetF == null} onClick={() => act("target", { delta: -1 })} className={btn}>−</button>
+              <button type="button" aria-label="Target down" disabled={off || th.targetF == null} onClick={() => act("target", { delta: -1 })} className={btn}>−</button>
               <div className="w-20">
-                {th.targetF != null
+                {th.targetF != null && !nc
                   ? <NumField aria-label="Target temperature" value={th.targetF} min={60} max={85} onCommit={(v) => act("target", { targetF: v })}
                       className="w-full h-12 rounded-lg bg-slate-800 border border-slate-600 text-center text-3xl font-bold font-mono text-slate-100" />
                   : <span className="text-4xl font-bold font-mono">--</span>}
               </div>
-              <button type="button" aria-label="Target up" disabled={busy || th.targetF == null} onClick={() => act("target", { delta: 1 })} className={btn}>+</button>
+              <button type="button" aria-label="Target up" disabled={off || th.targetF == null} onClick={() => act("target", { delta: 1 })} className={btn}>+</button>
             </div>
             <p className="text-[11px] text-slate-500">60–85°F · type a value and press Enter</p>
           </div>
         </div>
 
         <div className="flex gap-2">
-          <Toggle label="HEAT" sub={sub("heat")} on={T.heat.want} color="bg-orange-700 border-orange-500" disabled={busy || !u}
+          <Toggle label="HEAT" sub={sub("heat")} on={T.heat.want} color="bg-orange-700 border-orange-500" disabled={off}
             onClick={() => act(`toggle/heat/${T.heat.want ? "off" : "on"}`)} />
-          <Toggle label="COOL" sub={sub("cool")} on={T.cool.want} color="bg-blue-700 border-blue-500" disabled={busy || !u}
+          <Toggle label="COOL" sub={sub("cool")} on={T.cool.want} color="bg-blue-700 border-blue-500" disabled={off}
             onClick={() => act(`toggle/cool/${T.cool.want ? "off" : "on"}`)} />
-          <Toggle label="FAN" sub={sub("fan")} on={T.fan.want} color="bg-green-700 border-green-500" disabled={busy || !u}
+          <Toggle label="FAN" sub={sub("fan")} on={T.fan.want} color="bg-green-700 border-green-500" disabled={off}
             onClick={() => act(`toggle/fan/${T.fan.want ? "off" : "on"}`)} />
         </div>
 
@@ -121,7 +133,7 @@ export default function LiveRtu1({ showSchedule = true }: { showSchedule?: boole
           <p className="text-xs text-slate-400 mb-1">Thermostat mode</p>
           <div className="grid grid-cols-4 gap-2">
             {["off", "cool", "heat", "auto"].map((m) => (
-              <button key={m} type="button" disabled={busy || !u} onClick={() => act("thermostat", { mode: m })}
+              <button key={m} type="button" disabled={off} onClick={() => act("thermostat", { mode: m })}
                 className={`min-h-12 rounded-xl border font-semibold capitalize disabled:opacity-50 ${mode === m ? "bg-sky-700 border-sky-500 text-white" : "bg-slate-800 border-slate-600 text-slate-200"}`}>{m}</button>
             ))}
           </div>
@@ -131,21 +143,24 @@ export default function LiveRtu1({ showSchedule = true }: { showSchedule?: boole
           relays {u?.relaysText || "none"} · thermostat {mode} / {th.stage || "idle"}{th.reason ? ` · ${th.reason}` : ""}{s?.bridgeFw ? ` · fw ${s.bridgeFw}` : ""}
           {msg && <span className="ml-2 text-slate-300">{msg}</span>}
         </p>
-        <p className="text-[11px] text-slate-500">Heat and cool can never run together — the store controller enforces the interlock.</p>
-        {showSchedule && <Rtu1Schedule />}
+        {nc ? <p className="text-[11px] text-amber-400/90">Not connected — no gateway bound to this rooftop yet. Controls are disabled; schedule settings are saved for later.</p>
+          : <p className="text-[11px] text-slate-500">Heat and cool can never run together — the store controller enforces the interlock.</p>}
+        {showSchedule && (compact && !schedOpen
+          ? <button type="button" onClick={() => setSchedOpen(true)} className="text-xs text-sky-400 underline">Daily schedule…</button>
+          : <RtuSchedule storeId={storeId} rtu={rtu} />)}
       </CardContent>
     </Card>
   );
 }
 
-function Rtu1Schedule() {
+function RtuSchedule({ storeId, rtu }: { storeId: number; rtu: number }) {
   const [sc, setSc] = useState<Sched | null>(null);
   const [msg, setMsg] = useState("");
-  useEffect(() => { fetch("/api/rtu1/schedule", { credentials: "same-origin" }).then((r) => (r.ok ? r.json() : null)).then(setSc).catch(() => {}); }, []);
+  useEffect(() => { fetch(`${base(storeId, rtu)}/schedule`, { credentials: "same-origin" }).then((r) => (r.ok ? r.json() : null)).then(setSc).catch(() => {}); }, [storeId, rtu]);
   if (!sc) return null;
   const save = async (next: Partial<Sched>) => {
     const merged = { ...sc, ...next }; setSc(merged); setMsg("");
-    try { setSc(await post("schedule", { enabled: merged.enabled, occStart: merged.occStart, occEnd: merged.occEnd, occTargetF: merged.occTargetF, unoccTargetF: merged.unoccTargetF })); setMsg("saved ✓"); }
+    try { setSc(await post(`${base(storeId, rtu)}/schedule`, { enabled: merged.enabled, occStart: merged.occStart, occEnd: merged.occEnd, occTargetF: merged.occTargetF, unoccTargetF: merged.unoccTargetF })); setMsg("saved ✓"); }
     catch (e: any) { setMsg(`error: ${e.message}`); }
   };
   const inp = "w-full h-11 rounded-lg bg-slate-800 border border-slate-600 px-2 text-slate-100 font-mono";

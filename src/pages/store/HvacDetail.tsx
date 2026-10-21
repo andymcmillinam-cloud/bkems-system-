@@ -5,8 +5,7 @@ import Layout from "@/components/Layout";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import LiveRtu1, { useRtu1 } from "@/components/LiveRtu1";
-import NumField from "@/components/NumField";
+import LiveRtu, { useRtu } from "@/components/LiveRtu";
 import { Input } from "@/components/ui/input";
 import {
   WEEKDAYS,
@@ -24,9 +23,8 @@ export default function HvacDetail() {
   const [prefs, setPrefs] = useState<HvacPrefs>(() => loadHvacPrefs(restaurantId));
   const [unitIdx, setUnitIdx] = useState(0);
   const [day, setDay] = useState<Weekday>("Mon");
-  const [mode, setMode] = useState<"temps" | "manual" | "schedule">("temps");
+  const [planner, setPlanner] = useState(false);
   const [savedFlash, setSavedFlash] = useState(false);
-  const rtu1 = useRtu1(3000);
 
   useEffect(() => { setPrefs(loadHvacPrefs(restaurantId)); }, [restaurantId]);
 
@@ -41,10 +39,8 @@ export default function HvacDetail() {
     return <Layout><p className="text-slate-400">Loading…</p></Layout>;
   }
 
-  const rtuTemps = prefs.units.map((u, i) => ({ ...u, temp: i === 0 ? rtu1.s?.rtu?.roomTempF ?? null : null }));
   const unit = prefs.units[unitIdx];
   const banner = data.restaurant.storeNumber?.replace(/^BK-0*/, "BK ") || data.restaurant.name;
-  const hvacRelay = data.relays.find((r) => r.relayKey === "relay_hvac_shed_stage1");
 
   return (
     <Layout>
@@ -58,78 +54,21 @@ export default function HvacDetail() {
         <Link to={`/stores/${restaurantId}`}><Button variant="secondary" size="sm">Home</Button></Link>
       </div>
 
-      <p className="text-xs text-slate-500 mb-3">
-        Rooftop 1 is LIVE (real room temp and relays). Rooftops 2–5 are not connected yet; their setpoint/schedule below is local autosave only (not sent to edge).
-      </p>
-
-      <div className="flex flex-wrap gap-2 mb-4">
-        {([
-          ["temps", "Temperatures"],
-          ["manual", "Manual setpoint"],
-          ["schedule", "1 ON / 1 OFF × 7 days"],
-        ] as const).map(([k, label]) => (
-          <Button key={k} size="sm" variant={mode === k ? "default" : "outline"} className={mode !== k ? "border-slate-600" : ""} onClick={() => setMode(k)}>{label}</Button>
-        ))}
-      </div>
-
       <div className="grid grid-cols-5 gap-2 mb-4">
-        {rtuTemps.map((u, i) => (
-          <button
-            key={u.label}
-            type="button"
-            onClick={() => setUnitIdx(i)}
-            className={`rounded-lg border px-1 py-3 text-center transition-colors ${unitIdx === i ? "border-sky-500 bg-sky-950/50" : "border-slate-700 bg-slate-900 hover:border-slate-500"}`}
-          >
-            <p className="text-[10px] text-slate-500">{u.label}</p>
-            <p className={`font-mono text-lg ${i === 0 ? "text-sky-300" : "text-slate-600"}`}>{i === 0 ? (u.temp != null ? `${u.temp.toFixed(0)}°` : "—") : "N/C"}</p>
-            <p className="text-[9px] text-slate-500">{i === 0 ? "LIVE" : "not connected"}</p>
-          </button>
+        {prefs.units.map((u, i) => (
+          <UnitTab key={u.label} storeId={restaurantId} rtu={i + 1} label={u.label} selected={unitIdx === i} onClick={() => setUnitIdx(i)} />
         ))}
       </div>
 
-      {unitIdx === 0 && <LiveRtu1 />}
+      <LiveRtu storeId={restaurantId} rtu={unitIdx + 1} label={`Rooftop ${unitIdx + 1}`} />
 
-      {unitIdx !== 0 && (
-        <p className="text-sm text-amber-400/90 mb-3">{unit.label}: Not connected yet — no live data or control.</p>
-      )}
+      <div className="mt-4 mb-2">
+        <Button size="sm" variant="outline" className="border-slate-600" onClick={() => setPlanner(!planner)}>
+          {planner ? "Hide" : "Show"} 7-day planner (local notes only — not sent to the rooftop)
+        </Button>
+      </div>
 
-      {unitIdx !== 0 && mode === "temps" && (
-        <Card className="bg-slate-900 border-slate-700">
-          <CardHeader><CardTitle className="text-slate-100 text-base">{unit.label} overview</CardTitle></CardHeader>
-          <CardContent className="space-y-2 text-sm text-slate-300">
-            <div className="flex justify-between"><span>Room / return</span><span className="font-mono text-slate-500">Not connected yet</span></div>
-            <div className="flex justify-between"><span>Saved setpoint (UI)</span><span className="font-mono">{unit.setpointF}°F</span></div>
-            <div className="flex justify-between"><span>Shed relay (contract)</span><span>{hvacRelay ? `${hvacRelay.actualState ? "ENERGIZED" : "OFF"} · ${hvacRelay.mode}` : "—"}</span></div>
-          </CardContent>
-        </Card>
-      )}
-
-      {unitIdx !== 0 && mode === "manual" && (
-        <Card className="bg-slate-900 border-slate-700">
-          <CardHeader><CardTitle className="text-slate-100 text-base">Manual temperature · {unit.label}</CardTitle></CardHeader>
-          <CardContent className="space-y-3">
-            <label className="text-xs text-slate-400 space-y-1 block max-w-xs">
-              Setpoint °F (autosave · not sent to RTU in Phase 1)
-              <NumField
-                key={unitIdx}
-                min={60}
-                max={85}
-                className="w-full rounded-md px-3 bg-slate-800 border border-slate-600 text-slate-100 h-10 text-lg font-mono"
-                value={unit.setpointF}
-                onCommit={(v) => {
-                  const units = prefs.units.map((u, i) => i === unitIdx ? { ...u, setpointF: v } : u);
-                  autosave({ units });
-                }}
-              />
-            </label>
-            <p className="text-xs text-amber-400/90">
-              DECISION NEEDED: sketch shows 1 ON/1 OFF per day; notebook asks for 2 cycles/day. This page implements the sketch (1×) for review.
-            </p>
-          </CardContent>
-        </Card>
-      )}
-
-      {unitIdx !== 0 && mode === "schedule" && (
+      {planner && (
         <Card className="bg-slate-900 border-slate-700">
           <CardHeader><CardTitle className="text-slate-100 text-base">{unit.label} · 1 ON / 1 OFF × 7 days</CardTitle></CardHeader>
           <CardContent>
@@ -160,5 +99,18 @@ export default function HvacDetail() {
         </Card>
       )}
     </Layout>
+  );
+}
+
+function UnitTab({ storeId, rtu, label, selected, onClick }: { storeId: number; rtu: number; label: string; selected: boolean; onClick: () => void }) {
+  const { s } = useRtu(storeId, rtu, 5000);
+  const live = s?.connected === true, t = s?.rtu?.roomTempF;
+  return (
+    <button type="button" onClick={onClick}
+      className={`rounded-lg border px-1 py-3 text-center transition-colors ${selected ? "border-sky-500 bg-sky-950/50" : "border-slate-700 bg-slate-900 hover:border-slate-500"}`}>
+      <p className="text-[10px] text-slate-500">{label}</p>
+      <p className={`font-mono text-lg ${live ? "text-sky-300" : "text-slate-600"}`}>{live ? (t != null ? `${t.toFixed(0)}°` : "—") : "N/C"}</p>
+      <p className="text-[9px] text-slate-500">{live ? "LIVE" : "not connected"}</p>
+    </button>
   );
 }

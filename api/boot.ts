@@ -18,7 +18,7 @@ app.use("/api/trpc/*", async (c) => {
     createContext,
   });
 });
-app.route("/", rtu1); // Rooftop 1 control: own login + Pi proxy
+app.route("/", rtu1); // RTU control (all stores) + /rtu1 page: own login + Pi proxy
 app.all("/api/*", (c) => c.json({ error: "Not Found" }, 404));
 
 export default app;
@@ -34,8 +34,8 @@ if (!booted) {
   sweepTimer.unref?.();
   const mqttOn = await startMqttBridge();
   if (!mqttOn) startSimulator(15_000);
-  const { startRtu1Schedule } = await import("./services/rtu1Schedule");
-  startRtu1Schedule();
+  const { startRtuSchedules } = await import("./services/rtuSchedule");
+  startRtuSchedules();
 }
 
 if (env.isProduction) {

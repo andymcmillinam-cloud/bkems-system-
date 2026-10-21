@@ -3,7 +3,7 @@ import { trpc } from "@/providers/trpc";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import Layout from "@/components/Layout";
-import LiveRtu1 from "@/components/LiveRtu1";
+import LiveRtu from "@/components/LiveRtu";
 
 const sevStyle: Record<string, string> = {
   OK: "bg-emerald-600/20 text-emerald-400 border-emerald-700",
@@ -24,10 +24,21 @@ export default function Dashboard() {
       {stores?.length === 0 && (
         <p className="text-slate-400">No restaurants assigned to your account yet — ask your administrator.</p>
       )}
-      <div className="mb-6 max-w-2xl">
-        <LiveRtu1 />
-        <p className="text-xs text-slate-500 mt-2">Rooftops 2–5: not connected yet. <a href="/rtu1" className="text-sky-400 underline">Full-screen Rooftop 1 page</a></p>
-      </div>
+      {stores?.map((s) => (
+        <section key={`rtus-${s.id}`} className="mb-6">
+          <div className="flex items-baseline justify-between mb-2">
+            <h2 className="text-base font-semibold text-slate-200">{s.storeNumber?.replace(/^BK-0*/, "BK ")} · Rooftops</h2>
+            <Link to={`/stores/${s.id}/hvac`} className="text-xs text-sky-400 underline">HVAC detail</Link>
+          </div>
+          <div className="flex gap-3 overflow-x-auto snap-x snap-mandatory pb-2 -mx-1 px-1">
+            {[1, 2, 3, 4, 5].map((n) => (
+              <div key={n} className="snap-start shrink-0 w-[85vw] max-w-[340px]">
+                <LiveRtu storeId={s.id} rtu={n} compact />
+              </div>
+            ))}
+          </div>
+        </section>
+      ))}
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
         {stores?.map((s) => (
           <Link key={s.id} to={`/stores/${s.id}`}>

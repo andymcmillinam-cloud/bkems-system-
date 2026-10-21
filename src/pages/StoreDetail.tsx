@@ -1,7 +1,7 @@
 import { Link, useParams } from "react-router";
 import { trpc } from "@/providers/trpc";
 import Layout from "@/components/Layout";
-import { useRtu1 } from "@/components/LiveRtu1";
+import { useRtu } from "@/components/LiveRtu";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -16,7 +16,6 @@ export default function StoreDetail() {
   const { id } = useParams();
   const restaurantId = Number(id);
   const utils = trpc.useUtils();
-  const rtu1 = useRtu1(3000);
   const { data, isLoading, error } = trpc.stores.storeDetail.useQuery(
     { restaurantId },
     { refetchInterval: 10000, enabled: Number.isFinite(restaurantId) },
@@ -51,11 +50,6 @@ export default function StoreDetail() {
     return { ...ch, on: !!r?.actualState, mode: r?.mode ?? "AUTO" };
   });
 
-  const rtuTemps = [1, 2, 3, 4, 5].map((id) => ({
-    id,
-    temp: id === 1 ? rtu1.s?.rtu?.roomTempF ?? null : null,
-    live: id === 1,
-  }));
 
   const banner =
     restaurant.storeNumber?.replace(/^BK-0*/, "BK ") ||
@@ -205,24 +199,13 @@ export default function StoreDetail() {
             </CardHeader>
             <CardContent>
               <div className="grid grid-cols-5 gap-1.5">
-                {rtuTemps.map((u) => (
-                  <div
-                    key={u.id}
-                    className="rounded-lg bg-slate-800/80 border border-slate-700 px-1 py-2 text-center"
-                  >
-                    <p className="text-[10px] text-slate-500">RTU{u.id}</p>
-                    <p className={`font-mono text-sm ${u.live ? "text-sky-300" : "text-slate-600"}`}>
-                      {u.live ? (u.temp != null ? u.temp.toFixed(0) : "—") : "N/C"}
-                    </p>
-                    <p className="text-[9px] text-slate-500">{u.live ? "LIVE" : "not conn."}</p>
-                  </div>
-                ))}
+                {[1, 2, 3, 4, 5].map((n) => <RtuCell key={n} storeId={restaurantId} rtu={n} />)}
               </div>
               <p className="text-[11px] text-slate-500 mt-2">
-                RTU1 live · RTU2–5 not connected yet
+                LIVE = connected rooftop · N/C = not connected yet
               </p>
               <p className="text-xs text-sky-500/80 group-hover:text-sky-400">
-                Tap for Rooftop 1 controls & schedule →
+                Tap for rooftop controls & schedules →
               </p>
             </CardContent>
           </Card>
@@ -280,5 +263,17 @@ export default function StoreDetail() {
         </Card>
       </div>
     </Layout>
+  );
+}
+
+function RtuCell({ storeId, rtu }: { storeId: number; rtu: number }) {
+  const { s } = useRtu(storeId, rtu, 5000);
+  const live = s?.connected === true, t = s?.rtu?.roomTempF;
+  return (
+    <div className="rounded-lg bg-slate-800/80 border border-slate-700 px-1 py-2 text-center">
+      <p className="text-[10px] text-slate-500">RTU{rtu}</p>
+      <p className={`font-mono text-sm ${live ? "text-sky-300" : "text-slate-600"}`}>{live ? (t != null ? t.toFixed(0) : "—") : "N/C"}</p>
+      <p className="text-[9px] text-slate-500">{live ? "LIVE" : "not conn."}</p>
+    </div>
   );
 }
