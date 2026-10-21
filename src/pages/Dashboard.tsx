@@ -24,6 +24,12 @@ export default function Dashboard() {
         <p className="text-slate-400">No restaurants assigned to your account yet — ask your administrator.</p>
       )}
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+        <a href="/rtu1">
+          <Card className="bg-slate-900 border border-sky-800 hover:border-slate-500 transition-colors">
+            <CardHeader><CardTitle className="text-base">Rooftop 1 · Temperature control</CardTitle></CardHeader>
+            <CardContent className="text-sm text-slate-300">Room temp, target −/+, Heat/Cool/Fan, thermostat mode. Login required.</CardContent>
+          </Card>
+        </a>
         {stores?.map((s) => (
           <Link key={s.id} to={`/stores/${s.id}`}>
             <Card className={`bg-slate-900 border hover:border-slate-500 transition-colors ${

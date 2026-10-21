@@ -5,7 +5,7 @@ import { getDb } from "../queries/connection";
 import { sessions, users } from "@db/schema";
 
 export const SESSION_COOKIE = "bkems_session";
-const SESSION_TTL_HOURS = 24 * 14;
+const SESSION_TTL_HOURS = 24 * 365;
 
 export async function hashPassword(plain: string) {
   return bcrypt.hash(plain, 10);

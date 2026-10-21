@@ -25,7 +25,7 @@ export const authRouter = createRouter({
         throw new TRPCError({ code: "UNAUTHORIZED", message: "Invalid username or password" });
       }
       const token = await createSession(user.id);
-      ctx.resHeaders.set("set-cookie", sessionCookieHeader(token, 14 * 24 * 3600));
+      ctx.resHeaders.set("set-cookie", sessionCookieHeader(token, 365 * 24 * 3600));
       const { passwordHash, ...safe } = user;
       return safe;
     }),
