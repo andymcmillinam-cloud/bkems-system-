@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { useNavigate } from "react-router";
+import { useLocation, useNavigate } from "react-router";
 import { trpc } from "@/providers/trpc";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -10,8 +10,11 @@ export default function Login() {
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const navigate = useNavigate();
+  const location = useLocation();
+  const from = (location.state as { from?: string } | null)?.from;
+  const backTo = from && from.startsWith("/") && !from.startsWith("/login") ? from : "/";
   const login = trpc.auth.login.useMutation({
-    onSuccess: () => navigate("/"),
+    onSuccess: () => navigate(backTo, { replace: true }),
     onError: (e) => setError(e.message),
   });
 

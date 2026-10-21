@@ -33,6 +33,7 @@ export default function Dashboard() {
           <div className="flex gap-3 overflow-x-auto snap-x snap-mandatory pb-2 -mx-1 px-1">
             {[1, 2, 3, 4, 5].map((n) => (
               <div key={n} className="snap-start shrink-0 w-[85vw] max-w-[340px]">
+                <Link to={`/stores/${s.id}/hvac?rtu=${n}`} className="block text-[11px] text-sky-400 underline mb-1">{s.storeNumber?.replace(/^BK-0*/, "BK ")} · RTU {n} detail →</Link>
                 <LiveRtu storeId={s.id} rtu={n} compact />
               </div>
             ))}

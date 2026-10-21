@@ -61,8 +61,8 @@ export default function Layout({ children }: { children: ReactNode }) {
   });
 
   useEffect(() => {
-    if (!isLoading && !me) navigate("/login");
-  }, [me, isLoading, navigate]);
+    if (!isLoading && !me) navigate("/login", { replace: true, state: { from: location.pathname + location.search } });
+  }, [me, isLoading, navigate, location.pathname, location.search]);
   useEffect(() => {
     if (me?.mustChangePassword) setPwOpen(true);
   }, [me?.mustChangePassword]);
@@ -77,10 +77,26 @@ export default function Layout({ children }: { children: ReactNode }) {
     ...(me.role === "OPERATOR" ? [{ to: "/operator", label: "Organizations" }] : []),
   ];
 
+  const showBack = location.pathname !== "/";
+  const parentRoute = (() => {
+    const m = location.pathname.match(/^\/stores\/(\d+)\/.+/);
+    return m ? `/stores/${m[1]}` : "/";
+  })();
+  const goBack = () => {
+    const idx = (window.history.state as { idx?: number } | null)?.idx ?? 0;
+    if (idx > 0) navigate(-1); else navigate(parentRoute, { replace: true });
+  };
+
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100">
       <header className="border-b border-slate-800 bg-slate-900/80 sticky top-0 z-10">
         <div className="max-w-6xl mx-auto px-4 h-14 flex items-center gap-4">
+          {showBack && (
+            <button type="button" onClick={goBack} aria-label="Back"
+              className="min-h-11 min-w-11 px-3 -ml-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-base font-semibold text-white whitespace-nowrap">
+              ← Back
+            </button>
+          )}
           <Link to="/" className="font-bold text-emerald-400 whitespace-nowrap">BKEMS</Link>
           <nav className="flex gap-1 flex-1">
             {nav.map((n) => (
