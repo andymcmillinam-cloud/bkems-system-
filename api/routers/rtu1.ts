@@ -5,12 +5,12 @@ import { Hono } from "hono";
 import { getCookie, setCookie, deleteCookie } from "hono/cookie";
 import crypto from "crypto";
 import { getUserByToken, readSessionCookie } from "../services/auth";
-import { getSchedule, saveSchedule } from "../services/rtu1Schedule";
+import { getSchedule, saveSchedule } from "../services/rtuSchedule";
+import { bindingFor, allBindings, storeById, storeIdByNumber, RTUS_PER_STORE, DEFAULT_PI, type Binding } from "../services/rtuBindings";
 
 const USER = process.env.RTU_LOGIN_USER || "andy";
 const PASS = process.env.RTU_LOGIN_PASS || "";
 const SECRET = process.env.RTU_SESSION_SECRET || crypto.randomBytes(32).toString("hex");
-const PI = (process.env.PI_API_BASE || "http://bkems.local:8080").replace(/\/$/, "");
 const COOKIE = "bkems_rtu1";
 const TTL_S = 12 * 3600;
 
@@ -40,17 +40,18 @@ function limited(ip: string) {
 function addFail(ip: string) { const f = fails.get(ip) || []; f.push(Date.now()); fails.set(ip, f); globalFails.push(Date.now()); }
 const ipOf = (c: any) => c.req.header("cf-connecting-ip") || c.req.header("x-forwarded-for")?.split(",")[0].trim() || "local";
 
-export async function pi(path: string, body?: unknown) {
+export async function piAt(base: string, path: string, body?: unknown) {
   const ctl = new AbortController(); const to = setTimeout(() => ctl.abort(), 8000);
   try {
-    const r = await fetch(PI + path, body === undefined ? { signal: ctl.signal } : {
+    const r = await fetch(base + path, body === undefined ? { signal: ctl.signal } : {
       method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body), signal: ctl.signal });
     return { status: r.status, json: (await r.json().catch(() => ({ error: "bad reply from Pi" }))) as any };
   } catch (e: any) {
-    console.error("[rtu1] Pi request failed:", path, e?.cause?.code || e?.cause?.message || e?.message);
+    console.error("[rtu] Pi request failed:", path, e?.cause?.code || e?.cause?.message || e?.message);
     return { status: 502, json: { error: "store Pi unreachable" } as any };
   } finally { clearTimeout(to); }
 }
+export const pi = (path: string, body?: unknown) => piAt(DEFAULT_PI, path, body);
 
 export const rtu1 = new Hono();
 
@@ -84,45 +85,77 @@ async function authed(c: any) {
   try { return !!(await getUserByToken(tok)); } catch (e: any) { console.error("[rtu1] session lookup failed:", e?.message); return false; }
 }
 rtu1.use("/rtu1", async (c, next) => { if (!(await authed(c))) return c.redirect("/rtu1/login", 302); await next(); });
-rtu1.use("/api/rtu1/*", async (c, next) => {
+const guard = async (c: any, next: any) => {
   if (!(await authed(c))) return c.json({ error: "login required" }, 401);
   if (c.req.method === "POST" && c.req.header("x-bkems-ui") !== "1") return c.json({ error: "bad request" }, 403); // CSRF guard
   await next();
-});
+};
+rtu1.use("/api/rtu1/*", guard);
+rtu1.use("/api/rtu/*", guard);
 
-rtu1.get("/api/rtu1/state", async (c) => {
-  const r = await pi("/api/state");
-  if (r.status !== 200) return c.json(r.json, r.status as any);
-  const t = r.json.telemetry || {}, rt = (t.rtus || {})["1"] || null, th = (r.json.thermostat || {})["1"] || null;
-  return c.json({ rtu: rt && { online: rt.online, relaysMask: rt.relaysMask, wanted: rt.wanted, shed: rt.shed, relaysText: rt.relaysText,
-    roomTempC: rt.roomTempC, roomTempF: rt.roomTempF, tempAgeS: rt.tempAgeS, uptimeS: rt.uptimeS, rssi: rt.rssi },
-    thermostat: th, bridgeFw: t.firmware, bridgeConnected: t.bridge?.connected, telemetryAgeS: r.json.telemetryAgeS,
-    lastCommand: (t.commands || []).slice(-1)[0] || null });
-});
-rtu1.post("/api/rtu1/target", async (c) => {
-  const b: any = await c.req.json().catch(() => ({}));
-  let body: any;
-  if (b.delta === 1 || b.delta === -1) body = { delta: b.delta };
-  else if (Number.isFinite(Number(b.targetF))) body = { targetF: Math.max(60, Math.min(85, Math.round(Number(b.targetF)))) };
-  else return c.json({ error: "targetF or delta ±1 required" }, 400);
-  const r = await pi("/api/rtu/1/target", body); return c.json(r.json, r.status as any);
-});
-rtu1.post("/api/rtu1/toggle/:what/:on", async (c) => {
-  const { what, on } = c.req.param();
-  if (!["heat", "cool", "fan"].includes(what) || !["on", "off"].includes(on)) return c.json({ error: "bad toggle" }, 400);
-  const r = await pi(`/api/rtu/1/toggle/${what}/${on}`, {}); return c.json(r.json, r.status as any);
-});
-rtu1.post("/api/rtu1/thermostat", async (c) => {
-  const b: any = await c.req.json().catch(() => ({}));
-  if (!["off", "cool", "heat", "auto"].includes(b.mode)) return c.json({ error: "mode must be off|cool|heat|auto" }, 400);
-  const r = await pi("/api/rtu/1/thermostat", { mode: b.mode }); return c.json(r.json, r.status as any);
-});
-rtu1.get("/api/rtu1/schedule", (c) => c.json(getSchedule()));
-rtu1.post("/api/rtu1/schedule", async (c) => {
-  const b: any = await c.req.json().catch(() => null);
-  const r = saveSchedule(b); return r.ok ? c.json(r.schedule) : c.json({ error: r.error }, 400);
-});
-rtu1.post("/api/rtu1/auto", async (c) => { const r = await pi("/api/rtu/1/auto", {}); return c.json(r.json, r.status as any); });
+// ---- Generic per store/RTU API: /api/rtu/:storeId/:rtuNum/* (storeId = restaurants.id, rtuNum 1..5).
+// /api/rtu1/* is an alias for BK-0791 RTU 1.
+type Ctx = { storeId: number; sn: string; rtuNum: number; b: Binding | null };
+async function resolve(c: any, alias: boolean): Promise<Ctx | Response> {
+  if (alias) {
+    const id = await storeIdByNumber("BK-0791").catch(() => null);
+    return { storeId: id ?? 0, sn: "BK-0791", rtuNum: 1, b: bindingFor("BK-0791", 1) };
+  }
+  const storeId = Number(c.req.param("storeId")), rtuNum = Number(c.req.param("rtuNum"));
+  if (!Number.isInteger(storeId) || storeId < 1 || !Number.isInteger(rtuNum) || rtuNum < 1 || rtuNum > RTUS_PER_STORE)
+    return c.json({ error: "bad store or rtu" }, 400);
+  const st = await storeById(storeId).catch((e) => { console.error("[rtu] store lookup failed:", e?.message); return undefined; });
+  if (st === undefined) return c.json({ error: "store lookup failed" }, 500);
+  if (!st) return c.json({ error: "unknown store" }, 404);
+  return { storeId, sn: st.sn, rtuNum, b: bindingFor(st.sn, rtuNum) };
+}
+const NC = (x: Ctx) => ({ error: "not connected", connected: false, storeId: x.storeId, rtuNum: x.rtuNum });
+
+function mount(base: string, alias: boolean) {
+  const R = async (c: any, fn: (x: Ctx) => Promise<Response> | Response) => { const x = await resolve(c, alias); return x instanceof Response ? x : fn(x); };
+  const ctl = (c: any, fn: (x: Ctx, b: Binding) => Promise<Response>) => R(c, (x) => (x.b ? fn(x, x.b) : c.json(NC(x), 409)));
+
+  rtu1.get(`${base}/state`, (c) => R(c, async (x) => {
+    if (!x.b) return c.json({ ...NC(x), rtu: null, thermostat: null });
+    const r = await piAt(x.b.gateway, "/api/state");
+    if (r.status !== 200) return c.json({ ...r.json, connected: true }, r.status as any);
+    const k = String(x.b.rtu), t = r.json.telemetry || {}, rt = (t.rtus || {})[k] || null, th = (r.json.thermostat || {})[k] || null;
+    return c.json({ connected: true, storeId: x.storeId, rtuNum: x.rtuNum,
+      rtu: rt && { online: rt.online, relaysMask: rt.relaysMask, wanted: rt.wanted, shed: rt.shed, relaysText: rt.relaysText,
+        roomTempC: rt.roomTempC, roomTempF: rt.roomTempF, tempAgeS: rt.tempAgeS, uptimeS: rt.uptimeS, rssi: rt.rssi },
+      thermostat: th, bridgeFw: t.firmware, bridgeConnected: t.bridge?.connected, telemetryAgeS: r.json.telemetryAgeS,
+      lastCommand: (t.commands || []).slice(-1)[0] || null });
+  }));
+  rtu1.post(`${base}/target`, (c) => ctl(c, async (_x, b) => {
+    const q: any = await c.req.json().catch(() => ({}));
+    let body: any;
+    if (q.delta === 1 || q.delta === -1) body = { delta: q.delta };
+    else if (Number.isFinite(Number(q.targetF))) body = { targetF: Math.max(60, Math.min(85, Math.round(Number(q.targetF)))) };
+    else return c.json({ error: "targetF or delta ±1 required" }, 400);
+    const r = await piAt(b.gateway, `/api/rtu/${b.rtu}/target`, body); return c.json(r.json, r.status as any);
+  }));
+  rtu1.post(`${base}/toggle/:what/:on`, (c) => ctl(c, async (_x, b) => {
+    const { what, on } = c.req.param();
+    if (!["heat", "cool", "fan"].includes(what) || !["on", "off"].includes(on)) return c.json({ error: "bad toggle" }, 400);
+    const r = await piAt(b.gateway, `/api/rtu/${b.rtu}/toggle/${what}/${on}`, {}); return c.json(r.json, r.status as any);
+  }));
+  rtu1.post(`${base}/thermostat`, (c) => ctl(c, async (_x, b) => {
+    const q: any = await c.req.json().catch(() => ({}));
+    if (!["off", "cool", "heat", "auto"].includes(q.mode)) return c.json({ error: "mode must be off|cool|heat|auto" }, 400);
+    const r = await piAt(b.gateway, `/api/rtu/${b.rtu}/thermostat`, { mode: q.mode }); return c.json(r.json, r.status as any);
+  }));
+  rtu1.post(`${base}/auto`, (c) => ctl(c, async (_x, b) => { const r = await piAt(b.gateway, `/api/rtu/${b.rtu}/auto`, {}); return c.json(r.json, r.status as any); }));
+  rtu1.get(`${base}/schedule`, (c) => R(c, (x) => c.json({ ...getSchedule(x.sn, x.rtuNum), connected: !!x.b })));
+  rtu1.post(`${base}/schedule`, (c) => R(c, async (x) => {
+    const q: any = await c.req.json().catch(() => null);
+    const r = saveSchedule(x.sn, x.rtuNum, q); return r.ok ? c.json({ ...r.schedule, connected: !!x.b }) : c.json({ error: r.error }, 400);
+  }));
+}
+// Bindings overview for the UI (which RTUs are live). No gateway URLs are exposed.
+rtu1.get("/api/rtu/bindings", (c) => c.json({ rtusPerStore: RTUS_PER_STORE,
+  bound: allBindings().map(({ storeNumber, rtuNum }) => ({ storeNumber, rtuNum })) }));
+mount("/api/rtu1", true);
+mount("/api/rtu/:storeId/:rtuNum", false);
 
 rtu1.get("/rtu1", (c) => c.html(`<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>BKEMS · Rooftop 1</title><style>
