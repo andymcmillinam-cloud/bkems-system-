@@ -40,8 +40,13 @@ never heat (W) with cool (Y1/Y2) — enforced at the final relay-output stage, b
 ```
 GET  /api/state                                  telemetry + last bridge serial lines
 POST /api/rtu/<1-5>/on | off | auto | identify
+POST /api/rtu/<1-5>/heat                          call W only
 POST /api/rtu/<1-5>/relay/<w|y1|y2|g>/<on|off>
      optional body {"durationS": 600}
+POST /api/rtu/<1-5>/target      {"targetF": 73} or {"delta": 1|-1}   (60..85 F)
+POST /api/rtu/<1-5>/thermostat  {"mode": "off|cool|heat|auto"}       (Pi-side thermostat, persisted)
+POST /api/rtu/<1-5>/toggle/<heat|cool|fan>/<on|off>   heat=W, cool=Y1(+Y2 if target<=room-5F), fan=G
+POST /api/rtu/<1-5>/simtemp     {"tempF": 75, "secs": 600} | {"tempF": null}   (test only)
 ```
 Example from the Mac: `curl -X POST http://bkems.local:8080/api/rtu/1/off`
 
@@ -54,7 +59,19 @@ Example from the Mac: `curl -X POST http://bkems.local:8080/api/rtu/1/off`
 The older `edge/bkems_edge_agent.py` (local broker ⇄ Command Center uplink) can run alongside
 later; it is not needed on the LAN.
 
-## Bridge serial console (firmware 1.2, 115200 baud)
+## Firmware 1.3 (RTU + bridge, hardware-tested Oct 19 2026)
+- RTU reads a DHT11 room-temperature sensor and reports it in `RTU_STATUS`; `/api/state` exposes
+  `roomTempC/roomTempF` and the temperature age per RTU.
+- Dedicated bridge sketch prints the room temperature in its `[bridge] RTU1 ...` status lines.
+- The Pi agent runs an optional thermostat (target 60..85 F, modes off/cool/heat/auto). It starts
+  **off** and does nothing until enabled from the panel or API. All 1.2 relay safety rules still apply.
+
+## Remote access (bkems.info)
+The Mac's Command Center proxies Rooftop 1 at **https://bkems.info/rtu1** behind a login
+(credentials live only in the Mac's `.env`, never in this repo). Unauthenticated `/api/rtu1/*`
+requests get 401.
+
+## Bridge serial console (firmware 1.3, 115200 baud)
 `shed <rtu|0> <w|y1|y2|g> [secs]` · `clear <rtu|0>` · `call <rtu|0> <w|y1|y2|g|none> [secs]` ·
 `release <rtu|0>` · `id <rtu|0>` · `ver`. The bridge prints `TX`, `ACK` and
 `[bridge] RTU1 relays=- Y1 -- G wanted=0x0A shed=0x00 up=…s rssi=…` lines.
