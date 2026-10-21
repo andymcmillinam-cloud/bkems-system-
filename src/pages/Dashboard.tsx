@@ -3,6 +3,7 @@ import { trpc } from "@/providers/trpc";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import Layout from "@/components/Layout";
+import LiveRtu1 from "@/components/LiveRtu1";
 
 const sevStyle: Record<string, string> = {
   OK: "bg-emerald-600/20 text-emerald-400 border-emerald-700",
@@ -23,13 +24,11 @@ export default function Dashboard() {
       {stores?.length === 0 && (
         <p className="text-slate-400">No restaurants assigned to your account yet — ask your administrator.</p>
       )}
+      <div className="mb-6 max-w-2xl">
+        <LiveRtu1 />
+        <p className="text-xs text-slate-500 mt-2">Rooftops 2–5: not connected yet. <a href="/rtu1" className="text-sky-400 underline">Full-screen Rooftop 1 page</a></p>
+      </div>
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-        <a href="/rtu1">
-          <Card className="bg-slate-900 border border-sky-800 hover:border-slate-500 transition-colors">
-            <CardHeader><CardTitle className="text-base">Rooftop 1 · Temperature control</CardTitle></CardHeader>
-            <CardContent className="text-sm text-slate-300">Room temp, target −/+, Heat/Cool/Fan, thermostat mode. Login required.</CardContent>
-          </Card>
-        </a>
         {stores?.map((s) => (
           <Link key={s.id} to={`/stores/${s.id}`}>
             <Card className={`bg-slate-900 border hover:border-slate-500 transition-colors ${

@@ -1,6 +1,7 @@
 import { Link, useParams } from "react-router";
 import { trpc } from "@/providers/trpc";
 import Layout from "@/components/Layout";
+import { useRtu1 } from "@/components/LiveRtu1";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -15,6 +16,7 @@ export default function StoreDetail() {
   const { id } = useParams();
   const restaurantId = Number(id);
   const utils = trpc.useUtils();
+  const rtu1 = useRtu1(3000);
   const { data, isLoading, error } = trpc.stores.storeDetail.useQuery(
     { restaurantId },
     { refetchInterval: 10000, enabled: Number.isFinite(restaurantId) },
@@ -43,17 +45,16 @@ export default function StoreDetail() {
   const byKind = (k: string) => sensors.find((s) => s.kind === k);
   const cooler = byKind("COOLER");
   const freezer = byKind("FREEZER");
-  const ambient = byKind("AMBIENT");
 
   const lightStatus = LIGHT_RELAYS.map((ch) => {
     const r = relays.find((x) => x.relayKey === ch.relayKey);
     return { ...ch, on: !!r?.actualState, mode: r?.mode ?? "AUTO" };
   });
 
-  const base = (ambient?.lastValue as number | null | undefined) ?? 70;
-  const rtuTemps = [0, -1.2, 0.8, -0.5, 1.5].map((d, i) => ({
-    id: i + 1,
-    temp: ambient?.lastValue != null ? Number(ambient.lastValue) + d : null,
+  const rtuTemps = [1, 2, 3, 4, 5].map((id) => ({
+    id,
+    temp: id === 1 ? rtu1.s?.rtu?.roomTempF ?? null : null,
+    live: id === 1,
   }));
 
   const banner =
@@ -210,17 +211,18 @@ export default function StoreDetail() {
                     className="rounded-lg bg-slate-800/80 border border-slate-700 px-1 py-2 text-center"
                   >
                     <p className="text-[10px] text-slate-500">RTU{u.id}</p>
-                    <p className="font-mono text-sm text-sky-300">
-                      {u.temp != null ? u.temp.toFixed(0) : "—"}
+                    <p className={`font-mono text-sm ${u.live ? "text-sky-300" : "text-slate-600"}`}>
+                      {u.live ? (u.temp != null ? u.temp.toFixed(0) : "—") : "N/C"}
                     </p>
+                    <p className="text-[9px] text-slate-500">{u.live ? "LIVE" : "not conn."}</p>
                   </div>
                 ))}
               </div>
               <p className="text-[11px] text-slate-500 mt-2">
-                Phase-1 supervisory · temps only (thermostat remains primary)
+                RTU1 live · RTU2–5 not connected yet
               </p>
               <p className="text-xs text-sky-500/80 group-hover:text-sky-400">
-                Tap for schedule / manual →
+                Tap for Rooftop 1 controls & schedule →
               </p>
             </CardContent>
           </Card>
