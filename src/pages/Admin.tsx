@@ -20,6 +20,12 @@ export default function Admin() {
   const setActive = trpc.admin.setUserActive.useMutation({ onSuccess: inv });
   const createStore = trpc.admin.createRestaurant.useMutation({ onSuccess: inv });
   const setAssignments = trpc.admin.setAssignments.useMutation({ onSuccess: inv });
+  const deleteUser = trpc.admin.deleteUser.useMutation({ onSuccess: inv });
+  const unlockUser = trpc.admin.unlockUser.useMutation({ onSuccess: inv });
+  const [auditKind, setAuditKind] = useState("ALL");
+  const { data: auditRows, refetch: refetchAudit } = trpc.admin.auditLog.useQuery(
+    { limit: 300, kind: auditKind === "ALL" ? undefined : auditKind }, { refetchInterval: 15000 });
+  const storeLabel = (id: number | null) => (id ? restaurantList?.find((r) => r.id === id)?.storeNumber ?? `#${id}` : "—");
 
   const [nu, setNu] = useState({ username: "", displayName: "", password: "", role: "DISTRICT_LEADER" });
   const [ns, setNs] = useState({ storeNumber: "", name: "", address: "" });
@@ -47,7 +53,19 @@ export default function Admin() {
                       {u.role === "ADMIN" ? "Admin" : "District Leader"}
                     </Badge>
                     {!u.active && <Badge className="ml-1 bg-rose-600/20 text-rose-300 border border-rose-700">disabled</Badge>}
+                    {u.lockedUntil && new Date(u.lockedUntil).getTime() > Date.now() && (
+                      <Badge className="ml-1 bg-amber-600/20 text-amber-300 border border-amber-700 cursor-pointer" title="Click to unlock"
+                        onClick={() => unlockUser.mutate({ userId: u.id })}>
+                        locked until {new Date(u.lockedUntil).toLocaleTimeString()} · unlock
+                      </Badge>
+                    )}
                   </div>
+                  {u.role === "DISTRICT_LEADER" && (
+                    <Button size="sm" variant="outline" className="border-rose-700 text-rose-300 h-7 text-xs"
+                      onClick={() => { if (confirm(`Delete leader ${u.displayName} (@${u.username})? This cannot be undone.`)) deleteUser.mutate({ userId: u.id }); }}>
+                      Delete
+                    </Button>
+                  )}
                   <Switch checked={u.active} onCheckedChange={(v) => setActive.mutate({ userId: u.id, active: v })} />
                 </div>
                 <div className="flex gap-2">
@@ -154,6 +172,46 @@ export default function Admin() {
           </CardContent>
         </Card>
       </div>
+
+      {/* Audit log */}
+      <Card className="bg-slate-900 border-slate-700 mt-6">
+        <CardHeader className="flex flex-row items-center gap-3">
+          <CardTitle className="text-slate-200 text-base flex-1">Audit log (logins &amp; control commands)</CardTitle>
+          <Select value={auditKind} onValueChange={setAuditKind}>
+            <SelectTrigger className="bg-slate-800 border-slate-600 h-8 w-40"><SelectValue /></SelectTrigger>
+            <SelectContent>
+              {["ALL", "LOGIN_OK", "LOGIN_FAIL", "LOGIN_LOCKED", "LOGOUT", "COMMAND", "DENIED", "ADMIN"].map((k) => (
+                <SelectItem key={k} value={k}>{k}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <Button size="sm" variant="outline" className="border-slate-600 h-8" onClick={() => refetchAudit()}>Refresh</Button>
+        </CardHeader>
+        <CardContent className="overflow-x-auto">
+          <table className="w-full text-xs text-slate-300">
+            <thead className="text-slate-500 text-left">
+              <tr><th className="py-1 pr-3">Time</th><th className="pr-3">Who</th><th className="pr-3">Kind</th><th className="pr-3">Store</th>
+                <th className="pr-3">RTU</th><th className="pr-3">Action</th><th className="pr-3">Result</th><th className="pr-3">Detail</th><th>IP</th></tr>
+            </thead>
+            <tbody>
+              {auditRows?.map((a) => (
+                <tr key={a.id} className="border-t border-slate-800 align-top">
+                  <td className="py-1 pr-3 whitespace-nowrap">{new Date(a.createdAt).toLocaleString()}</td>
+                  <td className="pr-3">{a.username}</td>
+                  <td className={`pr-3 ${a.kind === "DENIED" || a.kind.startsWith("LOGIN_F") || a.kind === "LOGIN_LOCKED" ? "text-rose-300" : ""}`}>{a.kind}</td>
+                  <td className="pr-3">{storeLabel(a.restaurantId)}</td>
+                  <td className="pr-3">{a.rtu ?? "—"}</td>
+                  <td className="pr-3">{a.action}</td>
+                  <td className="pr-3">{a.result ?? ""}</td>
+                  <td className="pr-3 max-w-xs truncate" title={a.detail ?? ""}>{a.detail ?? ""}</td>
+                  <td>{a.ip ?? ""}</td>
+                </tr>
+              ))}
+              {!auditRows?.length && <tr><td colSpan={9} className="py-3 text-slate-500">No entries yet.</td></tr>}
+            </tbody>
+          </table>
+        </CardContent>
+      </Card>
     </Layout>
   );
 }

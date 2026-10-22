@@ -4,6 +4,7 @@ import { eq, inArray } from "drizzle-orm";
 import type { TrpcContext } from "./context";
 import { getDb } from "./queries/connection";
 import { assignments } from "@db/schema";
+import { audit, ipFromHeaders } from "./services/audit";
 
 const t = initTRPC.context<TrpcContext>().create({
   transformer: superjson,
@@ -12,10 +13,22 @@ const t = initTRPC.context<TrpcContext>().create({
 export const createRouter = t.router;
 export const publicQuery = t.procedure;
 
-/** Requires any logged-in user */
-export const authedProcedure = t.procedure.use(({ ctx, next }) => {
+/** Requires any logged-in user. Every mutation (control + admin command) is written to the audit log. */
+export const authedProcedure = t.procedure.use(async ({ ctx, next, type, path, getRawInput }) => {
   if (!ctx.user) throw new TRPCError({ code: "UNAUTHORIZED", message: "Not signed in" });
-  return next({ ctx: { ...ctx, user: ctx.user } });
+  const user = ctx.user;
+  const res = await next({ ctx: { ...ctx, user } });
+  if (type === "mutation" && !path.startsWith("auth.") && !path.startsWith("notifications.")) {
+    const input: any = await getRawInput().catch(() => undefined);
+    await audit({
+      userId: user.id, username: user.username,
+      kind: path.startsWith("admin.") || path.startsWith("operator.") ? "ADMIN" : res.ok ? "COMMAND" : "DENIED",
+      restaurantId: typeof input?.restaurantId === "number" ? input.restaurantId : null,
+      action: path, detail: input, result: res.ok ? "ok" : (res as any).error?.code ?? "error",
+      ip: ipFromHeaders(ctx.req.headers),
+    });
+  }
+  return res;
 });
 
 /** Requires ADMIN (customer boss) or OPERATOR (platform owner) role */

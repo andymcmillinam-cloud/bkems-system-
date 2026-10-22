@@ -43,6 +43,8 @@ export const users = mysqlTable("users", {
   role: mysqlEnum("role", ["OPERATOR", "ADMIN", "DISTRICT_LEADER"]).notNull().default("DISTRICT_LEADER"),
   active: boolean("active").notNull().default(true),
   mustChangePassword: boolean("must_change_password").notNull().default(true),
+  failedLogins: int("failed_logins").notNull().default(0),
+  lockedUntil: timestamp("locked_until"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
 });
 
@@ -265,4 +267,23 @@ export const pushSubscriptions = mysqlTable(
     createdAt: timestamp("created_at").notNull().defaultNow(),
   },
   (t) => [index("idx_push_user").on(t.userId)],
+);
+
+// ---------- Audit log: logins + every control / admin command ----------
+export const auditLog = mysqlTable(
+  "audit_log",
+  {
+    id: bigint("id", { mode: "number", unsigned: true }).autoincrement().primaryKey(),
+    userId: bigint("user_id", { mode: "number", unsigned: true }),
+    username: varchar("username", { length: 64 }).notNull(),
+    kind: mysqlEnum("kind", ["LOGIN_OK", "LOGIN_FAIL", "LOGIN_LOCKED", "LOGOUT", "COMMAND", "ADMIN", "DENIED"]).notNull(),
+    restaurantId: bigint("restaurant_id", { mode: "number", unsigned: true }),
+    rtu: int("rtu"),
+    action: varchar("action", { length: 128 }).notNull(),
+    detail: varchar("detail", { length: 512 }),
+    result: varchar("result", { length: 32 }),
+    ip: varchar("ip", { length: 64 }),
+    createdAt: timestamp("created_at").notNull().defaultNow(),
+  },
+  (t) => [index("idx_audit_time").on(t.createdAt), index("idx_audit_store").on(t.restaurantId, t.createdAt)],
 );
