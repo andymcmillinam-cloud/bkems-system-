@@ -79,12 +79,18 @@ export default function Layout({ children }: { children: ReactNode }) {
 
   const showBack = location.pathname !== "/";
   const parentRoute = (() => {
-    const m = location.pathname.match(/^\/stores\/(\d+)\/.+/);
-    return m ? `/stores/${m[1]}` : "/";
+    const p = location.pathname.replace(/\/+$/, "");
+    const rtu = p.match(/^\/stores\/(\d+)\/hvac\/[^/]+$/);
+    if (rtu) return `/stores/${rtu[1]}/hvac`;
+    const sub = p.match(/^\/stores\/(\d+)\/.+/);
+    if (sub) return `/stores/${sub[1]}`;
+    return "/";
   })();
   const goBack = () => {
     const idx = (window.history.state as { idx?: number } | null)?.idx ?? 0;
-    if (idx > 0) navigate(-1); else navigate(parentRoute, { replace: true });
+    // Store pages follow the hierarchy: RTU detail -> HVAC overview -> store -> home.
+    if (location.pathname.startsWith("/stores/")) navigate(parentRoute);
+    else if (idx > 0) navigate(-1); else navigate(parentRoute, { replace: true });
   };
 
   return (
