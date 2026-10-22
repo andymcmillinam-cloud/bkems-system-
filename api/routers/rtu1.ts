@@ -5,6 +5,8 @@ import { Hono } from "hono";
 import { getCookie, setCookie, deleteCookie } from "hono/cookie";
 import crypto from "crypto";
 import { getUserByToken, readSessionCookie } from "../services/auth";
+import { accessibleRestaurantIds } from "../middleware";
+import { audit } from "../services/audit";
 import { getSchedule, saveSchedule } from "../services/rtuSchedule";
 import { bindingFor, allBindings, storeById, storeIdByNumber, RTUS_PER_STORE, DEFAULT_PI, type Binding } from "../services/rtuBindings";
 
@@ -70,23 +72,39 @@ rtu1.post("/rtu1/login", async (c) => {
   const f = await c.req.parseBody();
   const u = String(f.username || ""), p = String(f.password || "");
   if (!PASS || !safeEq(u, USER) || !safeEq(p, PASS)) {
-    addFail(ip); return c.html(loginPage("Invalid username or password"), 401);
+    addFail(ip); await audit({ username: u.slice(0, 64) || "?", kind: limited(ip) ? "LOGIN_LOCKED" : "LOGIN_FAIL", action: "rtu1.login", ip });
+    return c.html(loginPage("Invalid username or password"), 401);
   }
   fails.delete(ip);
+  await audit({ userId: 0, username: USER, kind: "LOGIN_OK", action: "rtu1.login", ip });
   setCookie(c, COOKIE, makeToken(), { httpOnly: true, secure: true, sameSite: "Strict", path: "/", maxAge: TTL_S });
   return c.redirect("/rtu1", 303);
 });
 rtu1.post("/rtu1/logout", (c) => { deleteCookie(c, COOKIE, { path: "/" }); return c.redirect("/rtu1/login", 303); });
 
 // Everything below needs a valid session: the RTU cookie OR an active main-site (users/sessions) login.
-async function authed(c: any) {
-  if (validToken(getCookie(c, COOKIE))) return true;
-  const tok = readSessionCookie(c.req.raw); if (!tok) return false;
-  try { return !!(await getUserByToken(tok)); } catch (e: any) { console.error("[rtu1] session lookup failed:", e?.message); return false; }
+// The legacy RTU cookie (owner login from .env) is full access; main-site users are scoped by role/assignments.
+type Principal = { id: number; username: string; role: string; orgId: number | null };
+async function authed(c: any): Promise<Principal | null> {
+  if (validToken(getCookie(c, COOKIE))) return { id: 0, username: USER, role: "OPERATOR", orgId: null };
+  const tok = readSessionCookie(c.req.raw); if (!tok) return null;
+  try { const u = await getUserByToken(tok); return u ? { id: u.id, username: u.username, role: u.role, orgId: u.orgId } : null; }
+  catch (e: any) { console.error("[rtu1] session lookup failed:", e?.message); return null; }
 }
-rtu1.use("/rtu1", async (c, next) => { if (!(await authed(c))) return c.redirect("/rtu1/login", 302); await next(); });
+async function canAccess(p: Principal, storeId: number) {
+  if (p.role === "OPERATOR") return true;
+  return (await accessibleRestaurantIds(p)).includes(storeId);
+}
+rtu1.use("/rtu1", async (c, next) => {
+  const p = await authed(c); if (!p) return c.redirect("/rtu1/login", 302);
+  const id = await storeIdByNumber("BK-0791").catch(() => null);
+  if (!id || !(await canAccess(p, id))) return c.text("Forbidden: this store is not assigned to you", 403);
+  await next();
+});
 const guard = async (c: any, next: any) => {
-  if (!(await authed(c))) return c.json({ error: "login required" }, 401);
+  const p = await authed(c);
+  if (!p) return c.json({ error: "login required" }, 401);
+  c.set("principal", p);
   if (c.req.method === "POST" && c.req.header("x-bkems-ui") !== "1") return c.json({ error: "bad request" }, 403); // CSRF guard
   await next();
 };
@@ -112,7 +130,24 @@ async function resolve(c: any, alias: boolean): Promise<Ctx | Response> {
 const NC = (x: Ctx) => ({ error: "not connected", connected: false, storeId: x.storeId, rtuNum: x.rtuNum });
 
 function mount(base: string, alias: boolean) {
-  const R = async (c: any, fn: (x: Ctx) => Promise<Response> | Response) => { const x = await resolve(c, alias); return x instanceof Response ? x : fn(x); };
+  // Every request is checked against the caller's assigned stores (403 if unassigned); every POST is audited.
+  const R = async (c: any, fn: (x: Ctx) => Promise<Response> | Response) => {
+    const x = await resolve(c, alias); if (x instanceof Response) return x;
+    const p: Principal = c.get("principal");
+    const post = c.req.method === "POST";
+    const action = "rtu." + c.req.path.replace(/^\/api\/rtu1?\/(\d+\/\d+\/)?/, "");
+    if (!p || !x.storeId || !(await canAccess(p, x.storeId))) {
+      if (post) await audit({ userId: p?.id, username: p?.username ?? "?", kind: "DENIED", restaurantId: x.storeId || null, rtu: x.rtuNum, action, result: "403", ip: ipOf(c) });
+      return c.json({ error: "This store is not assigned to you" }, 403);
+    }
+    const res = await fn(x);
+    if (post) {
+      const body = await c.req.json().catch(() => null);
+      await audit({ userId: p.id, username: p.username, kind: "COMMAND", restaurantId: x.storeId, rtu: x.rtuNum, action,
+        detail: body, result: String(res.status), ip: ipOf(c) });
+    }
+    return res;
+  };
   const ctl = (c: any, fn: (x: Ctx, b: Binding) => Promise<Response>) => R(c, (x) => (x.b ? fn(x, x.b) : c.json(NC(x), 409)));
 
   rtu1.get(`${base}/state`, (c) => R(c, async (x) => {

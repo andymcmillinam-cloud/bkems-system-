@@ -1,10 +1,10 @@
 import { z } from "zod";
-import { eq, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, sql } from "drizzle-orm";
 import { TRPCError } from "@trpc/server";
 import { createRouter, adminProcedure, operatorProcedure } from "../middleware";
 import { getDb } from "../queries/connection";
 import {
-  assignments, devices, doorSecurity, organizations, relayStates, restaurants, sensors, users,
+  assignments, auditLog, pushSubscriptions, sessions, devices, doorSecurity, organizations, relayStates, restaurants, sensors, users,
 } from "@db/schema";
 import { hashPassword } from "../services/auth";
 
@@ -153,7 +153,7 @@ export const adminRouter = createRouter({
       if (!target || (ctx.user.role !== "OPERATOR" && target.orgId !== ctx.user.orgId))
         throw new TRPCError({ code: "FORBIDDEN", message: "Not your user" });
       await db.update(users)
-        .set({ passwordHash: await hashPassword(input.newPassword), mustChangePassword: true })
+        .set({ passwordHash: await hashPassword(input.newPassword), mustChangePassword: true, failedLogins: 0, lockedUntil: null })
         .where(eq(users.id, input.userId));
       return { ok: true };
     }),
@@ -168,7 +168,53 @@ export const adminRouter = createRouter({
       if (!target || (ctx.user.role !== "OPERATOR" && target.orgId !== ctx.user.orgId))
         throw new TRPCError({ code: "FORBIDDEN", message: "Not your user" });
       await db.update(users).set({ active: input.active }).where(eq(users.id, input.userId));
+      if (!input.active) await db.delete(sessions).where(eq(sessions.userId, input.userId)); // kick them out now
       return { ok: true };
+    }),
+
+  unlockUser: adminProcedure
+    .input(z.object({ userId: z.number() }))
+    .mutation(async ({ input, ctx }) => {
+      const db = getDb();
+      const target = (await db.select().from(users).where(eq(users.id, input.userId)).limit(1))[0];
+      if (!target || (ctx.user.role !== "OPERATOR" && target.orgId !== ctx.user.orgId))
+        throw new TRPCError({ code: "FORBIDDEN", message: "Not your user" });
+      await db.update(users).set({ failedLogins: 0, lockedUntil: null }).where(eq(users.id, input.userId));
+      return { ok: true };
+    }),
+
+  deleteUser: adminProcedure
+    .input(z.object({ userId: z.number() }))
+    .mutation(async ({ input, ctx }) => {
+      if (input.userId === ctx.user.id) throw new TRPCError({ code: "BAD_REQUEST", message: "You cannot delete your own account" });
+      const db = getDb();
+      const target = (await db.select().from(users).where(eq(users.id, input.userId)).limit(1))[0];
+      if (!target || (ctx.user.role !== "OPERATOR" && target.orgId !== ctx.user.orgId))
+        throw new TRPCError({ code: "FORBIDDEN", message: "Not your user" });
+      if (target.role !== "DISTRICT_LEADER" && ctx.user.role !== "OPERATOR")
+        throw new TRPCError({ code: "FORBIDDEN", message: "Only district leaders can be deleted here; disable admins instead" });
+      await db.delete(sessions).where(eq(sessions.userId, input.userId));
+      await db.delete(assignments).where(eq(assignments.userId, input.userId));
+      await db.delete(pushSubscriptions).where(eq(pushSubscriptions.userId, input.userId));
+      await db.delete(users).where(eq(users.id, input.userId));
+      return { ok: true };
+    }),
+
+  // ---------- Audit log (logins + every control/admin command) ----------
+  auditLog: adminProcedure
+    .input(z.object({ limit: z.number().min(1).max(1000).default(200), kind: z.string().optional(), restaurantId: z.number().optional() }).optional())
+    .query(async ({ ctx, input }) => {
+      const db = getDb();
+      const conds: any[] = [];
+      if (input?.kind) conds.push(eq(auditLog.kind, input.kind as any));
+      if (input?.restaurantId) conds.push(eq(auditLog.restaurantId, input.restaurantId));
+      if (ctx.user.role !== "OPERATOR") {
+        // only entries from users of my org (or unattributed/legacy logins)
+        const ids = (await db.select({ id: users.id }).from(users).where(eq(users.orgId, ctx.user.orgId!))).map((r) => r.id);
+        conds.push(sql`(${auditLog.userId} is null or ${auditLog.userId} = 0 or ${inArray(auditLog.userId, ids.length ? ids : [-1])})`);
+      }
+      return db.select().from(auditLog).where(conds.length ? and(...conds) : undefined)
+        .orderBy(desc(auditLog.id)).limit(input?.limit ?? 200);
     }),
 
   // ---------- Restaurants (scoped to my org, capped by org maxStores) ----------
@@ -243,6 +289,13 @@ export const adminRouter = createRouter({
       const target = (await db.select().from(users).where(eq(users.id, input.userId)).limit(1))[0];
       if (!target || (ctx.user.role !== "OPERATOR" && target.orgId !== ctx.user.orgId))
         throw new TRPCError({ code: "FORBIDDEN", message: "Not your user" });
+      const ids = [...new Set(input.restaurantIds)];
+      if (ids.length) {
+        const ok = await db.select({ id: restaurants.id }).from(restaurants)
+          .where(and(inArray(restaurants.id, ids), eq(restaurants.orgId, target.orgId!)));
+        if (ok.length !== ids.length) throw new TRPCError({ code: "FORBIDDEN", message: "Store not in this organization" });
+      }
+      input = { ...input, restaurantIds: ids };
       await db.delete(assignments).where(eq(assignments.userId, input.userId));
       if (input.restaurantIds.length) {
         await db.insert(assignments).values(
